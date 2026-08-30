@@ -1,0 +1,38 @@
+# =========================
+# Python / Django
+# =========================
+.venv/
+venv/
+backend/venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment / secrets
+.env
+*.env
+backend/.env
+
+# Django generated files
+backend/staticfiles/
+backend/media/
+
+# =========================
+# Node / React
+# =========================
+node_modules/
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+
+# =========================
+# OS / IDE
+# =========================
+.DS_Store
+.vscode/
+
+# =========================
+# Private cryptographic keys
+# =========================
+private_key.pem
