@@ -132,4 +132,6 @@ class RequestSerializer(serializers.ModelSerializer):
 class FinalPaperSerializer(serializers.ModelSerializer):
     class Meta:
         model = FinalPapers
-        fields = ["id", "s_code", "course", "semester", "branch", "subject", "paper"]
+        fields = ["id", "s_code", "course", "semester", "branch", "subject", "paper",
+                  "access_start", "access_end", "encrypted_cid"]
+        # encrypted_cid is exposed for verification/debugging; wrapped keys are not.

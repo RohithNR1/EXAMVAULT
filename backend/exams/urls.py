@@ -35,4 +35,6 @@ urlpatterns = [
     # Student
     path("student/me/", v.StudentMe.as_view()),
     path("student/final-papers/", v.StudentFinalPapers.as_view()),
+    # Phase 4.1: encrypted paper download endpoint
+    path("student/final-papers/<int:paper_id>/download/", v.StudentDownloadPaper),
 ]

@@ -67,3 +67,9 @@ export const getStudentMe = () =>
 
 export const getStudentFinalPapers = () =>
   client.get("student/final-papers/");
+
+// Phase 4.1: server-side decrypted download (returns raw PDF bytes)
+export const downloadPaper = (paperId) =>
+  client.get(`student/final-papers/${paperId}/download/`, {
+    responseType: "blob",
+  });

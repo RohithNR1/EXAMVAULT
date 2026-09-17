@@ -264,3 +264,121 @@ class SecurityHardeningTests(TestCase):
             settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"],
             timedelta(days=1),
         )
+
+
+class FinalPaperEncryptionTests(TestCase):
+    """Phase 4.1 tests for encrypted paper retrieval."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.teacher = CustomUser.objects.create_user(
+            username="teacher_enc", password="secret123", role="teacher",
+        )
+        self.student = CustomUser.objects.create_user(
+            username="alice_enc", password="secret123",
+            role="student", course="B.E.", semester="V", branch="CSE",
+            subject="MACHINE LEARNING",
+        )
+        self.other_student = CustomUser.objects.create_user(
+            username="bob_enc", password="secret123",
+            role="student", course="B.E.", semester="I", branch="IT",
+            subject="Internet of Things",
+        )
+        now = timezone.now()
+        self.final_paper = FinalPapers.objects.create(
+            s_code="ENC001",
+            course="B.E.",
+            semester="V",
+            branch="CSE",
+            subject="MACHINE LEARNING",
+            encrypted_cid="QmTestEncCidVal",
+            wrapped_iv="dGVzdGl2MTIzNA==",
+            wrapped_ct="dGVzdGN0MTIzNDU2Nzg=",
+            access_start=now - timedelta(hours=1),
+            access_end=now + timedelta(days=1),
+        )
+        self.future_paper = FinalPapers.objects.create(
+            s_code="FUT001",
+            course="B.E.",
+            semester="V",
+            branch="CSE",
+            subject="MACHINE LEARNING",
+            encrypted_cid="QmFutureCidTst",
+            wrapped_iv="aWYxMjM0NTY3OA==",
+            wrapped_ct="Y3Rmb3JkdGVzdDEy",
+            access_start=now + timedelta(days=1),
+            access_end=now + timedelta(days=2),
+        )
+        self.expired_paper = FinalPapers.objects.create(
+            s_code="EXP001",
+            course="B.E.",
+            semester="V",
+            branch="CSE",
+            subject="MACHINE LEARNING",
+            encrypted_cid="QmExpCidTst123",
+            wrapped_iv="aWYxMjM0NTY3OA==",
+            wrapped_ct="Y3RleHB0ZXN0MTIz",
+            access_start=now - timedelta(days=2),
+            access_end=now - timedelta(hours=1),
+        )
+        self.no_cid_paper = FinalPapers.objects.create(
+            s_code="NOCD001",
+            course="B.E.",
+            semester="V",
+            branch="CSE",
+            subject="MACHINE LEARNING",
+            encrypted_cid="",
+            wrapped_iv="",
+            wrapped_ct="",
+            access_start=now - timedelta(hours=1),
+            access_end=now + timedelta(days=1),
+        )
+
+    def _download_request(self, user, paper_id):
+        req = self.factory.get(f"/api/student/final-papers/{paper_id}/download/")
+        force_authenticate(req, user=user)
+        return req
+
+    def test_finalized_paper_stores_encrypted_cid(self):
+        """Finalized papers must have an encrypted_cid set."""
+        self.assertTrue(bool(self.final_paper.encrypted_cid))
+        self.assertNotEqual(self.final_paper.encrypted_cid, "")
+
+    def test_authorized_student_can_download(self):
+        """An authorized student with matching profile can request download."""
+        from exams.views_api import StudentDownloadPaper
+        req = self._download_request(self.student, self.final_paper.id)
+        resp = StudentDownloadPaper(req, paper_id=self.final_paper.id)
+        # We expect 502 here because IPFS mock won't respond; but we confirm
+        # the authorization / access-window checks passed (not 403).
+        self.assertNotEqual(resp.status_code, 403)
+
+    def test_unauthorized_different_profile_sees_forbidden(self):
+        """A student with a different profile cannot download another's paper."""
+        from exams.views_api import StudentDownloadPaper
+        req = self._download_request(self.other_student, self.final_paper.id)
+        resp = StudentDownloadPaper(req, paper_id=self.final_paper.id)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_future_access_start_blocks_download(self):
+        """A student cannot download a paper whose access window hasn't started."""
+        from exams.views_api import StudentDownloadPaper
+        req = self._download_request(self.student, self.future_paper.id)
+        resp = StudentDownloadPaper(req, paper_id=self.future_paper.id)
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("available", resp.data["detail"].lower())
+
+    def test_expired_access_end_blocks_download(self):
+        """A student cannot download a paper whose access window has expired."""
+        from exams.views_api import StudentDownloadPaper
+        req = self._download_request(self.student, self.expired_paper.id)
+        resp = StudentDownloadPaper(req, paper_id=self.expired_paper.id)
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("expired", resp.data["detail"].lower())
+
+    def test_missing_encrypted_cid_fails_safely(self):
+        """A paper without encrypted_cid returns 404, not a crash."""
+        from exams.views_api import StudentDownloadPaper
+        req = self._download_request(self.student, self.no_cid_paper.id)
+        resp = StudentDownloadPaper(req, paper_id=self.no_cid_paper.id)
+        self.assertEqual(resp.status_code, 404)

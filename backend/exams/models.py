@@ -60,6 +60,13 @@ STATUS = (
     ('Rejected', 'Rejected'),
 )
 
+SELECTION_STATUS = (
+    ('PENDING', 'Pending Review'),
+    ('UNDER_REVIEW', 'Under Review'),
+    ('SELECTED', 'Selected'),
+    ('NOT_SELECTED', 'Not Selected'),
+)
+
 
 class CustomUser(AbstractUser):
     teacher_id = models.CharField(max_length=20, default=teacherID, blank=True)
@@ -80,6 +87,14 @@ class Request(models.Model):
     q_pattern = models.FileField(upload_to='q_patterns/', null=True, blank=True)
     deadline = models.DateField(default=datetime.date.today)
     status = models.CharField(max_length=10, default='Pending', choices=STATUS)
+    selection_status = models.CharField(
+        max_length=20,
+        choices=SELECTION_STATUS,
+        default='PENDING'
+    )
+    uploaded_at = models.DateTimeField(null=True, blank=True)
+    selected_at = models.DateTimeField(null=True, blank=True)
+    finalized_at = models.DateTimeField(null=True, blank=True)
     enc_field = models.TextField(default='[]', blank=True)  # Store as JSON string
     private_key = models.FileField(upload_to='private_keys/', null=True, blank=True)
     total_marks = models.IntegerField(default=100)
@@ -95,6 +110,16 @@ class FinalPapers(models.Model):
     branch = models.CharField(max_length=40, default='None')
     subject = models.CharField(max_length=30, default='None')
     paper = models.FileField(upload_to='final_papers/', null=True, blank=True)
+    exam_datetime = models.DateTimeField(null=True, blank=True)
+    access_start = models.DateTimeField(null=True, blank=True)
+    access_end = models.DateTimeField(null=True, blank=True)
+    # Phase 4.1: IPFS CID of the encrypted paper (replaces direct media URL access).
+    # Kept alongside `paper` for backward compatibility until legacy rows are migrated.
+    encrypted_cid = models.CharField(max_length=256, blank=True, default='')
+    # Phase 4.1: AES-GCM wrapped Fernet key (base64-encoded iv + ciphertext).
+    # Stored so students can decrypt via server-side endpoint without exposing keys.
+    wrapped_iv = models.TextField(blank=True, default='')
+    wrapped_ct = models.TextField(blank=True, default='')
 
     def __str__(self):
         return self.s_code

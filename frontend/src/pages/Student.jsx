@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import NavBar from "../components/NavBar";
-import { getStudentMe, getStudentFinalPapers } from "../api/auth";
+import { getStudentMe, getStudentFinalPapers, downloadPaper } from "../api/auth";
 
 export default function Student() {
   const [profile, setProfile] = useState(null);
   const [papers, setPapers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [downloadingId, setDownloadingId] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -30,6 +31,27 @@ export default function Student() {
       }
     })();
   }, []);
+
+  const handleDownload = async (paperId, sCode) => {
+    setDownloadingId(paperId);
+    try {
+      const { data } = await downloadPaper(paperId);
+      const blob = new Blob([data], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${sCode}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Download failed:", err);
+      alert(err.response?.data?.detail || "Failed to download paper");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   const onLogout = () => {
     localStorage.clear();
@@ -81,17 +103,27 @@ export default function Student() {
                           : "Open-ended"}
                       </td>
                       <td className="px-6 py-3">
-                        {paper.paper ? (
-                          <a
-                            href={paper.paper}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline"
+                        {paper.encrypted_cid ? (
+                          <button
+                            onClick={() => handleDownload(paper.id, paper.s_code)}
+                            disabled={downloadingId === paper.id}
+                            className="text-blue-600 hover:underline disabled:text-gray-400"
                           >
-                            Download PDF
-                          </a>
+                            {downloadingId === paper.id ? "Downloading..." : "Download PDF"}
+                          </button>
                         ) : (
-                          <span className="text-gray-400">N/A</span>
+                          paper.paper ? (
+                            <a
+                              href={paper.paper}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline"
+                            >
+                              Download PDF
+                            </a>
+                          ) : (
+                            <span className="text-gray-400">N/A</span>
+                          )
                         )}
                       </td>
                     </tr>

@@ -21,7 +21,7 @@ from .serializers import UserSerializer, RegisterSerializer, LoginSerializer
 from .serializers import SubjectCodeSerializer, RequestSerializer, FinalPaperSerializer
 from .throttles import AuthRateThrottle
 from .models import *
-from .encryption import encrypt_file, decrypt_file
+from .encryption import encrypt_file, decrypt_file, wrap_fernet_key
 from .a_encryption import a_encryption, a_decryption
 from .ipfs_utils import add_file, get_file
 from .blockchain import record_cid
@@ -580,10 +580,12 @@ def COEFinalize(request, req_id):
     cid = values[1].decode("utf-8")
     enc_bytes = get_file(cid)
 
-    class _R:
-        def __init__(self, b): self.text = b.decode("latin1")
-    rfake = _R(enc_bytes)
-    pdf_file = decrypt_file(rfake, key, req.s_code)
+    # Phase 4.1: wrap the Fernet key so it can be stored securely on FinalPapers.
+    # The plaintext PDF is still written for backward compatibility (Superintendent
+    # views etc.), but students will retrieve through the encrypted path.
+    iv, ciphertext = wrap_fernet_key(key)
+    iv_hex = base64.b64encode(iv).decode("ascii")
+    ct_b64 = base64.b64encode(ciphertext).decode("ascii")
 
     teacher = User.objects.filter(username=req.tusername).values("course","semester","branch","subject")[0]
     final = FinalPapers.objects.create(
@@ -595,7 +597,10 @@ def COEFinalize(request, req_id):
         exam_datetime=request.data.get("exam_datetime") or None,
         access_start=request.data.get("access_start") or None,
         access_end=request.data.get("access_end") or None,
+        encrypted_cid=cid,
     )
+    final.wrapped_iv = iv_hex
+    final.wrapped_ct = ct_b64
     final.paper.save(f"{req.s_code}.pdf", pdf_file, save=True)
 
     req.status = "Finalized"
@@ -603,6 +608,92 @@ def COEFinalize(request, req_id):
     req.save()
 
     return Response({"message": "Finalized", "paper_id": final.id, "request_id": req.id})
+
+
+# -------- STUDENT DOWNLOAD (Phase 4.1) --------
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def StudentDownloadPaper(request, paper_id):
+    """
+    Server-side decrypted download for an authorized student.
+
+    - Enforces the student's profile match AND access window inside this view
+      (independent of any list/queryset filter).
+    - Fetches the encrypted paper from IPFS using the stored CID.
+    - Unwraps the Fernet key via AES-GCM + HKDF master key.
+    - Returns the decrypted PDF as bytes with Content-Disposition attachment.
+    - Never exposes encryption keys, private keys, or IPFS credentials.
+    """
+    from .encryption import unwrap_fernet_key
+
+    fp = FinalPapers.objects.filter(id=paper_id).first()
+    if not fp:
+        return Response({"detail": "Paper not found"}, status=404)
+
+    # Profile match: only the matching student (or a teacher/superintendent
+    # for admin purposes) may download. For strict student-only access, see
+    # the role guard below.
+    user = request.user
+    if user.role not in ("student", "teacher", "superintendent"):
+        return Response({"detail": "Forbidden"}, status=403)
+
+    if user.role == "student":
+        profile_ok = (
+            fp.course == user.course
+            and fp.semester == user.semester
+            and fp.branch == user.branch
+            and fp.subject == user.subject
+        )
+        if not profile_ok:
+            _security_logger.warning(
+                "Student %s attempted unauthorized download of paper_id=%s",
+                user.username, paper_id,
+            )
+            return Response({"detail": "Forbidden"}, status=403)
+
+        now = timezone.now()
+        if fp.access_start and now < fp.access_start:
+            return Response({"detail": "Access not yet available"}, status=403)
+        if fp.access_end and now > fp.access_end:
+            return Response({"detail": "Access has expired"}, status=403)
+
+    # Must have an encrypted CID (Phase 4.1 requirement)
+    if not fp.encrypted_cid:
+        _security_logger.warning(
+            "paper_id=%s has no encrypted_cid; reject download", paper_id
+        )
+        return Response({"detail": "Paper not available for secure download"}, status=404)
+
+    # Fetch encrypted bytes from IPFS
+    try:
+        enc_bytes = get_file(fp.encrypted_cid)
+    except Exception:
+        _security_logger.exception("IPFS fetch failed for cid=%s paper_id=%s", fp.encrypted_cid, paper_id)
+        return Response({"detail": "Unable to retrieve encrypted paper from IPFS"}, status=502)
+
+    # Unwrap Fernet key
+    try:
+        iv = base64.b64decode(fp.wrapped_iv)
+        ct = base64.b64decode(fp.wrapped_ct)
+        fernet_key = unwrap_fernet_key(iv, ct)
+    except Exception:
+        _security_logger.exception("Key unwrap failed for paper_id=%s", paper_id)
+        return Response({"detail": "Unable to decrypt paper"}, status=500)
+
+    # Decrypt
+    try:
+        class _R:
+            def __init__(self, b):
+                self.text = b.decode("latin1")
+        decrypted = decrypt_file(_R(enc_bytes), fernet_key, fp.s_code)
+    except Exception:
+        _security_logger.exception("Decryption failed for paper_id=%s", paper_id)
+        return Response({"detail": "Decryption failed"}, status=500)
+
+    from django.http import HttpResponse
+    response = HttpResponse(decrypted.read(), content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{fp.s_code}.pdf"'
+    return response
 
 
 # ----- SUPERINTENDENT -----
