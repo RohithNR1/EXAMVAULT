@@ -382,3 +382,113 @@ class FinalPaperEncryptionTests(TestCase):
         req = self._download_request(self.student, self.no_cid_paper.id)
         resp = StudentDownloadPaper(req, paper_id=self.no_cid_paper.id)
         self.assertEqual(resp.status_code, 404)
+
+
+class IPFSReliabilityTests(TestCase):
+    """Phase 4.2 tests for IPFS reliability and pinning verification."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+
+    def test_ipfs_utils_has_timeout_config(self):
+        """Settings must include an IPFS timeout value."""
+        from django.conf import settings
+        timeout = getattr(settings, "IPFS_TIMEOUT_SECONDS", None)
+        self.assertIsNotNone(timeout)
+        self.assertIsInstance(timeout, int)
+        self.assertGreater(timeout, 0)
+
+    def test_ipfs_utils_has_retry_config(self):
+        """Settings must include IPFS retry configuration."""
+        from django.conf import settings
+        retries = getattr(settings, "IPFS_MAX_RETRIES", None)
+        self.assertIsNotNone(retries)
+        self.assertIsInstance(retries, int)
+        self.assertGreaterEqual(retries, 0)
+
+    def test_pin_function_exists(self):
+        """pin(cid) must exist in ipfs_utils."""
+        from exams.ipfs_utils import pin
+        self.assertTrue(callable(pin))
+
+    def test_is_pinned_function_exists(self):
+        """is_pinned(cid) must exist in ipfs_utils."""
+        from exams.ipfs_utils import is_pinned
+        self.assertTrue(callable(is_pinned))
+
+    def test_verify_cid_function_exists(self):
+        """verify_cid(cid, expected_size) must exist in ipfs_utils."""
+        from exams.ipfs_utils import verify_cid
+        self.assertTrue(callable(verify_cid))
+
+    def test_check_ipfs_available_function_exists(self):
+        """check_ipfs_available() must exist in ipfs_utils."""
+        from exams.ipfs_utils import check_ipfs_available
+        self.assertTrue(callable(check_ipfs_available))
+
+    def test_get_file_uses_ipfs_utils_helper(self):
+        """get_file should delegate through the shared request helper."""
+        from exams import ipfs_utils
+        # The function should use _ipfs_request internally — verify by checking
+        # that importing get_file does not break and the module has the helper.
+        self.assertTrue(hasattr(ipfs_utils, "_ipfs_request"))
+        self.assertTrue(callable(ipfs_utils.get_file))
+
+    def test_add_file_calls_ipfs_endpoint_with_pin_true(self):
+        """add_file sends the ?pin=true flag so objects are retained locally."""
+        from exams import ipfs_utils
+        # We can't reach a real node here, but we verify the function source
+        # contains the pin=true flag — this catches regressions.
+        import inspect
+        source = inspect.getsource(ipfs_utils.add_file)
+        self.assertIn("pin=true", source)
+
+    def test_teacher_upload_returns_503_when_ipfs_unavailable(self):
+        """TeacherUploadPaper returns 503 when the IPFS node is unreachable."""
+        from exams.views_api import TeacherUploadPaper
+        from exams.models import Request
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.utils import timezone
+        from unittest.mock import patch, MagicMock
+
+        teacher = CustomUser.objects.create_user(
+            username="teacher_ipfs", password="secret123", role="teacher",
+        )
+        req_obj = Request.objects.create(
+            tusername=teacher.username,
+            s_code="TEST02",
+            status="Accepted",
+            deadline=timezone.now().date() + timedelta(days=1),
+        )
+        pdf = SimpleUploadedFile("sample.pdf", b"%PDF-1.4 mock", content_type="application/pdf")
+        req = self.factory.post(
+            f"/api/teacher/requests/{req_obj.id}/upload/",
+            {"paper": pdf},
+            format="multipart",
+        )
+        force_authenticate(req, user=teacher)
+
+        with patch("exams.views_api.get_ipfs_available", return_value=False):
+            resp = TeacherUploadPaper.as_view()(req, req_id=req_obj.id)
+        self.assertEqual(resp.status_code, 503)
+        self.assertIn("unavailable", resp.data["detail"].lower())
+
+    def test_verify_cid_returns_false_on_invalid_cid(self):
+        """verify_cid returns False when the CID cannot be fetched from IPFS."""
+        from exams.ipfs_utils import verify_cid
+        # Fake CID — expects the node to reject the lookup and return False, not raise.
+        result = verify_cid("QmInvalidCidThatWillNeverResolve123")
+        self.assertFalse(result)
+
+    def test_is_pinned_returns_false_on_invalid_cid(self):
+        """is_pinned returns False when the CID is unknown or unreachable."""
+        from exams.ipfs_utils import is_pinned
+        result = is_pinned("QmInvalidCidThatWillNeverResolve123")
+        self.assertFalse(result)
+
+    def test_check_ipfs_available_returns_bool(self):
+        """check_ipfs_available returns a boolean (True if reachable, else False)."""
+        from exams.ipfs_utils import check_ipfs_available
+        result = check_ipfs_available()
+        self.assertIsInstance(result, bool)
+

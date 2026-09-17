@@ -153,6 +153,9 @@ ENCRYPTION_ROOT.mkdir(parents=True, exist_ok=True)
 # IPFS / Blockchain environment
 IPFS_HOST = os.getenv("IPFS_HOST", "127.0.0.1")
 IPFS_PORT = int(os.getenv("IPFS_PORT", "5003"))
+# Phase 4.2: HTTP timeout (seconds) and max retry attempts for IPFS API calls.
+IPFS_TIMEOUT_SECONDS = int(os.getenv("IPFS_TIMEOUT_SECONDS", "30"))
+IPFS_MAX_RETRIES = int(os.getenv("IPFS_MAX_RETRIES", "2"))
 RPC_URL = os.getenv("RPC_URL", "http://127.0.0.1:7545")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS")

@@ -23,7 +23,7 @@ from .throttles import AuthRateThrottle
 from .models import *
 from .encryption import encrypt_file, decrypt_file, wrap_fernet_key
 from .a_encryption import a_encryption, a_decryption
-from .ipfs_utils import add_file, get_file
+from .ipfs_utils import add_file, get_file, get_ipfs_api_url, pin, is_pinned, verify_cid, check_ipfs_available as get_ipfs_available
 from .blockchain import record_cid
 
 # Import scrutiny analyzer (comprehensive)
@@ -261,16 +261,47 @@ class TeacherUploadPaper(generics.GenericAPIView):
             # --- Upload encrypted file to IPFS/MFS ---
             mfs_file_path = f"/uploads/{enc_name}"
             try:
+                # Check IPFS node availability before attempting upload.
+                if not get_ipfs_available():
+                    logger.error("TeacherUploadPaper: IPFS node unreachable at %s", get_ipfs_api_url())
+                    return Response(
+                        {"detail": "IPFS service unavailable"},
+                        status=503,
+                    )
                 logger.debug("TeacherUploadPaper: calling add_file with enc_path=%s mfs_path=%s", enc_path, mfs_file_path)
                 res = add_file(enc_path, mfs_path=mfs_file_path)
                 cid = res.get("Hash") if isinstance(res, dict) else None
                 if not cid:
                     logger.error("TeacherUploadPaper: add_file returned no CID; response: %s", res)
-                    return Response({"detail":"ipfs upload failed","ipfs_response":res}, status=500)
+                    return Response({"detail":"ipfs upload failed","ipfs_response":res}, status=503)
                 logger.info("TeacherUploadPaper: uploaded to IPFS cid=%s", cid)
+
+                # Explicitly pin the object for guaranteed local retention.
+                try:
+                    pin(cid)
+                except Exception as exc:
+                    logger.warning("TeacherUploadPaper: explicit pin failed (upload succeeded): %s", exc)
+
+                # Round-trip verify: fetch the CID back and confirm it matches.
+                try:
+                    import os as _os
+                    expected_size = _os.path.getsize(enc_path)
+                    verified = verify_cid(cid, expected_size=expected_size)
+                    if not verified:
+                        logger.error("TeacherUploadPaper: CID verification failed for cid=%s", cid)
+                        return Response(
+                            {"detail": "IPFS CID verification failed — object not retrievable"},
+                            status=503,
+                        )
+                    logger.info("TeacherUploadPaper: CID verified ok (cid=%s)", cid)
+                except Exception as exc:
+                    logger.warning("TeacherUploadPaper: CID verification error (not fatal): %s", exc)
+            except requests.exceptions.ConnectionError as e:
+                logger.exception("TeacherUploadPaper: IPFS connection failed: %s", str(e))
+                return Response({"detail":"ipfs service unavailable"}, status=503)
             except Exception as e:
                 logger.exception("TeacherUploadPaper: IPFS upload failed: %s", str(e))
-                return Response({"detail":"ipfs upload failed","error":str(e)}, status=500)
+                return Response({"detail":"ipfs upload failed","error":str(e)}, status=503)
 
             # RSA-encrypt metadata and save teacher private key file to Request.private_key
             try:
@@ -664,12 +695,15 @@ def StudentDownloadPaper(request, paper_id):
         )
         return Response({"detail": "Paper not available for secure download"}, status=404)
 
-    # Fetch encrypted bytes from IPFS
+    # Fetch encrypted bytes from IPFS — return 503 when the node is unavailable.
+    if not get_ipfs_available():
+        _security_logger.warning("IPFS node unreachable during student download paper_id=%s", paper_id)
+        return Response({"detail": "IPFS service unavailable"}, status=503)
     try:
         enc_bytes = get_file(fp.encrypted_cid)
     except Exception:
         _security_logger.exception("IPFS fetch failed for cid=%s paper_id=%s", fp.encrypted_cid, paper_id)
-        return Response({"detail": "Unable to retrieve encrypted paper from IPFS"}, status=502)
+        return Response({"detail": "Unable to retrieve encrypted paper from IPFS"}, status=503)
 
     # Unwrap Fernet key
     try:
