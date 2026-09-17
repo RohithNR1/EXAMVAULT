@@ -14,7 +14,8 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True)
+    password = serializers.CharField(write_only=True, min_length=6)
+    # role is intentionally excluded — server always assigns 'teacher' to prevent self-assignment of privileged roles.
 
     class Meta:
         model = User
@@ -28,13 +29,24 @@ class RegisterSerializer(serializers.ModelSerializer):
             "semester",
             "branch",
             "subject",
-            "role",
         ]
+
+    username = serializers.CharField(
+        max_length=150,
+        help_text="Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.",
+    )
+    email = serializers.EmailField(required=False, allow_blank=True)
+
+    def validate_username(self, value):
+        if not value.replace("-", "").replace("_", "").isalnum():
+            raise serializers.ValidationError("O nome de usuário deve conter apenas letras, números, hífens e underscores.")
+        return value.lower()
 
     def create(self, validated_data):
         pwd = validated_data.pop("password")
         user = User(**validated_data)
         user.set_password(pwd)
+        user.role = "teacher"  # All new registrations start as teacher by default
         user.save()
         return user
 

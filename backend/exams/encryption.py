@@ -20,17 +20,19 @@ def encrypt_file(paper):
 	return key
 
 
-def decrypt_file(paper,key,s_code):
-	
+def decrypt_file(paper, key, s_code):
+
 	fernet = Fernet(key)
 	paper = paper.text.encode('utf-8')
 
 	decrypted = fernet.decrypt(paper)
-	
-	with open('media/'+s_code+'.pdf','wb') as f:
+
+	decrypted_path = os.path.join(settings.MEDIA_ROOT, 'final_papers', f'{s_code}.pdf')
+	os.makedirs(os.path.dirname(decrypted_path), exist_ok=True)
+	with open(decrypted_path, 'wb') as f:
 		f.write(decrypted)
 
-	file_ = open('media/'+s_code+'.pdf','rb')
+	file_ = open(decrypted_path, 'rb')
 	f_file = File(file_)
 
 	return f_file

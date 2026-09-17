@@ -15,10 +15,10 @@ export default function App() {
         <Route path="/login" element={<Login/>} />
         <Route path="/register" element={<Register/>} />
 
-        <Route path="/teacher" element={<ProtectedRoute><Teacher/></ProtectedRoute>} />
-        <Route path="/coe" element={<ProtectedRoute><COE/></ProtectedRoute>} />
-        <Route path="/student" element={<ProtectedRoute><Student/></ProtectedRoute>} />
-        <Route path="/superintendent" element={<ProtectedRoute><Superintendent/></ProtectedRoute>} />
+        <Route path="/teacher" element={<ProtectedRoute allowedRole="teacher"><Teacher/></ProtectedRoute>} />
+        <Route path="/coe" element={<ProtectedRoute allowedRole="coe"><COE/></ProtectedRoute>} />
+        <Route path="/student" element={<ProtectedRoute allowedRole="student"><Student/></ProtectedRoute>} />
+        <Route path="/superintendent" element={<ProtectedRoute allowedRole="superintendent"><Superintendent/></ProtectedRoute>} />
       </Routes>
     </BrowserRouter>
   );

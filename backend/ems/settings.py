@@ -1,15 +1,24 @@
 import os
 import logging
+import logging.handlers
 from pathlib import Path
 from datetime import timedelta
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")  # loads .env variables
 
 # Django settings
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
-DEBUG = os.getenv("DEBUG", "True") == "True"
+_SECRET = os.getenv("SECRET_KEY")
+if not _SECRET:
+    raise ImproperlyConfigured(
+        "SECRET_KEY environment variable is required. "
+        "Copy backend/.env.example to backend/.env and set SECRET_KEY."
+    )
+SECRET_KEY = _SECRET
+# DEBUG defaults to False in production; explicitly opt into debug via DEBUG=True env var.
+DEBUG = os.getenv("DEBUG", "False") == "True"
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")]
 
 INSTALLED_APPS = [
@@ -84,18 +93,45 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
     ),
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        # Default throttle for unauthenticated (anonymous) requests
+        "anon": "20/min",
+        # Auth endpoints use a custom tight throttle (see AuthRateThrottle)
+        "auth": "5/min",
+        # Logged-in users get a generous per-action limit.
+        "user": "100/min",
+    },
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=8),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
 }
 
-# CORS
-CORS_ALLOW_ALL_ORIGINS = True
+# CORS - default to localhost frontend for local development.
+# In production, set CORS_ALLOWED_ORIGINS to the explicit list of trusted origins.
+_cors_origins_raw = os.getenv("CORS_ALLOWED_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:3000,http://localhost:3000")
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = [
+    o.strip() for o in _cors_origins_raw.split(",") if o.strip()
+]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = ["*"]
 CORS_EXPOSE_HEADERS = ["*"]
+
+# Production security settings (safe when behind a reverse proxy / TLS terminator).
+# When DEBUG=True these are relaxed so local HTTP development continues to work.
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
 # Static / Media
 STATIC_URL = "/static/"
@@ -121,12 +157,33 @@ RPC_URL = os.getenv("RPC_URL", "http://127.0.0.1:7545")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS")
 
+# Security event logger — writes auth failures and role violations to
+# a dedicated log file without leaking passwords, private keys, or tokens.
+_security_logger = logging.getLogger("examvault.security")
+_security_handler = logging.handlers.RotatingFileHandler(
+    BASE_DIR / "logs" / "security.log",
+    maxBytes=5 * 1024 * 1024,  # 5 MB
+    backupCount=3,
+)
+_security_handler.setFormatter(logging.Formatter(
+    "%(asctime)s %(levelname)s %(message)s"
+))
+_security_logger.addHandler(_security_handler)
+_security_logger.setLevel(logging.WARNING)
+# Ensure the logs directory exists at import time.
+(BASE_DIR / "logs").mkdir(exist_ok=True)
+
 # Logging - prints to console (development friendly)
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "handlers": {
         "console": {"class": "logging.StreamHandler",},
+        "security_file": {"class": "logging.handlers.RotatingFileHandler",
+                          "filename": str(BASE_DIR / "logs" / "security.log"),
+                          "maxBytes": 5 * 1024 * 1024,
+                          "backupCount": 3,
+                          "formatter": "simple",},
     },
     "formatters": {
         "simple": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
@@ -139,6 +196,11 @@ LOGGING = {
         "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "exams": {"handlers": ["console"], "level": "DEBUG", "propagate": True},
         "scrutiny": {"handlers": ["console"], "level": "DEBUG", "propagate": True},
+        "examvault.security": {
+            "handlers": ["console", "security_file"],
+            "level": "WARNING",
+            "propagate": False,
+        },
     },
 }
 

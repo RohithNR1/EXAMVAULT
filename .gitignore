@@ -36,3 +36,7 @@ frontend/dist/
 # Private cryptographic keys
 # =========================
 private_key.pem
+public_key.pem
+backend/exams/public_key.pem
+backend/media/encryption_keys/
+*.pem

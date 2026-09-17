@@ -25,12 +25,13 @@ def a_encryption(hash_id, key, t_id):
     with open(prk_file, 'wb') as f:
         f.write(pem)
 
-    # Save public key
+    # Save public key to ENCRYPTION_ROOT (not project root)
+    pub_key_path = os.path.join(settings.ENCRYPTION_ROOT, f'{t_id}_public_key.pem')
     pem = public_key.public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
-    with open('public_key.pem', 'wb') as f:
+    with open(pub_key_path, 'wb') as f:
         f.write(pem)
 
     # Load keys for encryption
@@ -40,7 +41,7 @@ def a_encryption(hash_id, key, t_id):
             password=None,
             backend=default_backend()
         )
-    with open("public_key.pem", "rb") as key_file:
+    with open(pub_key_path, "rb") as key_file:
         public_key = serialization.load_pem_public_key(
             key_file.read(),
             backend=default_backend()

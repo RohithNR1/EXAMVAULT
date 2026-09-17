@@ -8,7 +8,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status, generics
@@ -19,6 +19,7 @@ from django.contrib.auth import authenticate, get_user_model
 
 from .serializers import UserSerializer, RegisterSerializer, LoginSerializer
 from .serializers import SubjectCodeSerializer, RequestSerializer, FinalPaperSerializer
+from .throttles import AuthRateThrottle
 from .models import *
 from .encryption import encrypt_file, decrypt_file
 from .a_encryption import a_encryption, a_decryption
@@ -34,6 +35,7 @@ except Exception:
     ScrutinyResult = None
 
 logger = logging.getLogger(__name__)
+_security_logger = logging.getLogger("examvault.security")
 User = get_user_model()
 
 def _tokens_for_user(user):
@@ -43,6 +45,7 @@ def _tokens_for_user(user):
 # -------- AUTH ----------
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@throttle_classes([AuthRateThrottle])
 def register_user(request):
     ser = RegisterSerializer(data=request.data)
     if ser.is_valid():
@@ -52,11 +55,14 @@ def register_user(request):
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@throttle_classes([AuthRateThrottle])
 def login_user(request):
     ser = LoginSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
     user = authenticate(username=ser.validated_data["username"], password=ser.validated_data["password"])
     if not user:
+        logger.warning("Failed login attempt for username=%s ip=%s", ser.validated_data["username"], request.META.get("REMOTE_ADDR"))
+        _security_logger.warning("Failed login attempt for username=%s ip=%s", ser.validated_data["username"], request.META.get("REMOTE_ADDR"))
         return Response({"detail": "Invalid credentials"}, status=401)
     t = _tokens_for_user(user)
     payload = {
@@ -106,7 +112,11 @@ class TeacherAcceptedRequests(generics.ListAPIView):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@throttle_classes([AuthRateThrottle])
 def TeacherAcceptRequest(request, req_id):
+    if request.user.role != "teacher":
+        _security_logger.warning("Role violation: user %s attempted teacher action (accept)", request.user.username)
+        return Response({"detail": "Forbidden"}, status=403)
     r = Request.objects.filter(id=req_id, tusername=request.user.username).first()
     if not r:
         return Response({"detail": "Not found"}, status=404)
@@ -116,7 +126,11 @@ def TeacherAcceptRequest(request, req_id):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@throttle_classes([AuthRateThrottle])
 def TeacherRejectRequest(request, req_id):
+    if request.user.role != "teacher":
+        _security_logger.warning("Role violation: user %s attempted teacher action (reject)", request.user.username)
+        return Response({"detail": "Forbidden"}, status=403)
     r = Request.objects.filter(id=req_id, tusername=request.user.username).first()
     if not r:
         return Response({"detail": "Not found"}, status=404)
@@ -130,6 +144,13 @@ class TeacherUploadPaper(generics.GenericAPIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request, req_id):
+        if request.user.role != "teacher":
+            _security_logger.warning(
+                "Role violation: user %s (role=%s) attempted teacher upload on request %s",
+                request.user.username, request.user.role, req_id,
+            )
+            return Response({"detail": "Forbidden"}, status=403)
+
         logger.debug("TeacherUploadPaper called by user=%s req_id=%s", request.user.username, req_id)
         r = Request.objects.filter(id=req_id, tusername=request.user.username).first()
         if not r:
@@ -144,12 +165,39 @@ class TeacherUploadPaper(generics.GenericAPIView):
             logger.info("TeacherUploadPaper: missing file in request")
             return Response({"detail": "paper is required"}, status=400)
 
+        # Validate that uploaded file is a PDF
+        allowed_extensions = {".pdf"}
+        ext = os.path.splitext(paper.name)[1].lower()
+        if ext not in allowed_extensions:
+            _security_logger.warning(
+                "Rejected non-PDF upload by user=%s file=%s",
+                request.user.username, paper.name,
+            )
+            return Response(
+                {"detail": f"Invalid file type. Allowed: {', '.join(allowed_extensions)}"},
+                status=400,
+            )
+        if paper.content_type not in ("application/pdf", "application/octet-stream"):
+            _security_logger.warning(
+                "Rejected invalid MIME by user=%s mime=%s",
+                request.user.username, paper.content_type,
+            )
+            return Response(
+                {"detail": "Invalid MIME type. Expected application/pdf"},
+                status=400,
+            )
+
         # Use temp file for original paper (so we can analyze before encryption)
         tmp_path = None
         enc_path = None
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(paper.name)[1]) as tmp:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                total = 0
+                max_bytes = settings.DATA_UPLOAD_MAX_MEMORY_SIZE or 50 * 1024 * 1024
                 for chunk in paper.chunks():
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise ValueError("File exceeds maximum allowed size")
                     tmp.write(chunk)
                 tmp_path = tmp.name
             logger.debug("TeacherUploadPaper: saved temp uploaded file to %s", tmp_path)
