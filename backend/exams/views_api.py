@@ -5,6 +5,9 @@ import logging
 
 from django.core.files import File
 from django.conf import settings
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -14,7 +17,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from django.contrib.auth import authenticate, get_user_model
 
-from .serializers import *
+from .serializers import UserSerializer, RegisterSerializer, LoginSerializer
+from .serializers import SubjectCodeSerializer, RequestSerializer, FinalPaperSerializer
 from .models import *
 from .encryption import encrypt_file, decrypt_file
 from .a_encryption import a_encryption, a_decryption
@@ -55,7 +59,19 @@ def login_user(request):
     if not user:
         return Response({"detail": "Invalid credentials"}, status=401)
     t = _tokens_for_user(user)
-    return Response({"tokens": t, "role": user.role, "username": user.username})
+    payload = {
+        "tokens": t,
+        "role": user.role,
+        "username": user.username,
+    }
+    if user.role == "student":
+        payload.update({
+            "course": user.course,
+            "semester": user.semester,
+            "branch": user.branch,
+            "subject": user.subject,
+        })
+    return Response(payload)
 
 # ------- COMMON ---------
 class SubjectCodeList(generics.ListAPIView):
@@ -216,6 +232,8 @@ class TeacherUploadPaper(generics.GenericAPIView):
                     r.private_key.save(os.path.basename(priv_path), File(pf), save=True)
                 r.enc_field = arr
                 r.status = "Uploaded"
+                r.selection_status = "PENDING"
+                r.uploaded_at = timezone.now()
                 r.save()
                 logger.info("TeacherUploadPaper: Request %s marked Uploaded; saved private_key and enc_field", r.id)
             except Exception as e:
@@ -290,6 +308,10 @@ class COEListRequests(generics.ListAPIView):
                 "teacher_first_name": first_name,
                 "teacher_last_name": last_name,
                 "status": r.status,
+                "selection_status": r.selection_status,
+                "uploaded_at": r.uploaded_at,
+                "selected_at": r.selected_at,
+                "finalized_at": r.finalized_at,
                 "deadline": r.deadline,
             })
         return Response(response_data)
@@ -454,6 +476,9 @@ def COECandidates(request):
             "teacher_name": tname,
             "paper_number": f"Paper {idx+1}",
             "status": r.status,
+            "selection_status": r.selection_status,
+            "uploaded_at": r.uploaded_at,
+            "selected_at": r.selected_at,
             "deadline": r.deadline,
             "total_marks": r.total_marks,
             "syllabus_url": r.syllabus.url if r.syllabus else None,
@@ -465,12 +490,42 @@ def COECandidates(request):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+def COESelectCandidate(request, req_id):
+    if request.user.role != "coe":
+        return Response({"detail": "Only COE users can perform this action"}, status=403)
+
+    req = Request.objects.filter(id=req_id).first()
+    if not req:
+        return Response({"detail": "Not found"}, status=404)
+    if req.status != "Uploaded":
+        return Response({"detail": "Only uploaded candidates can be selected"}, status=400)
+
+    with transaction.atomic():
+        Request.objects.filter(s_code=req.s_code, status="Uploaded").exclude(id=req.id).update(selection_status="NOT_SELECTED")
+        req.selection_status = "SELECTED"
+        req.selected_at = timezone.now()
+        req.save(update_fields=["selection_status", "selected_at"])
+
+    return Response({
+        "message": "Candidate selected successfully",
+        "selected_request_id": req.id,
+        "s_code": req.s_code,
+    })
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def COEFinalize(request, req_id):
+    if request.user.role != "coe":
+        return Response({"detail": "Only COE users can perform this action"}, status=403)
+
     req = Request.objects.filter(id=req_id).first()
     if not req:
         return Response({"detail":"Not found"}, status=404)
     if req.status != "Uploaded":
-        return Response({"detail":"Only Uploaded requests can be finalized"}, status=400)
+        return Response({"detail":"Only the selected candidate can be finalized"}, status=400)
+    if req.selection_status != "SELECTED":
+        return Response({"detail": "Only the selected candidate can be finalized"}, status=400)
 
     values = a_decryption([req.enc_field, req.private_key])
     key = values[0]
@@ -489,14 +544,17 @@ def COEFinalize(request, req_id):
         semester=teacher["semester"],
         branch=teacher["branch"],
         subject=teacher["subject"],
+        exam_datetime=request.data.get("exam_datetime") or None,
+        access_start=request.data.get("access_start") or None,
+        access_end=request.data.get("access_end") or None,
     )
     final.paper.save(f"{req.s_code}.pdf", pdf_file, save=True)
 
-    Request.objects.filter(s_code=req.s_code).exclude(id=req.id).delete()
     req.status = "Finalized"
+    req.finalized_at = timezone.now()
     req.save()
 
-    return Response({"message": "Finalized", "paper_id": final.id})
+    return Response({"message": "Finalized", "paper_id": final.id, "request_id": req.id})
 
 
 # ----- SUPERINTENDENT -----
@@ -509,8 +567,53 @@ class SuperintendentListFinal(generics.ListAPIView):
 @permission_classes([IsAuthenticated])
 def SuperintendentGetDecryptInfo(request, paper_id):
     fp = FinalPapers.objects.filter(id=paper_id).first()
-    if not fp: return Response({"detail": "Not found"}, status=404)
+    if not fp:
+        return Response({"detail": "Not found"}, status=404)
     return Response({
         "s_code": fp.s_code,
-        "paper_url": fp.paper.url if fp.paper else None
+        "paper_url": fp.paper.url if fp.paper else None,
+        "exam_datetime": fp.exam_datetime,
+        "access_start": fp.access_start,
+        "access_end": fp.access_end,
     })
+
+
+# -------- STUDENT -----------
+class StudentMe(generics.RetrieveAPIView):
+    """Return the current authenticated user's profile."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserSerializer
+
+    def get_object(self):
+        return self.request.user
+
+
+class StudentFinalPapers(generics.ListAPIView):
+    """
+    Return finalized exam papers for the logged-in student, filtered by
+    the student's (course, semester, branch, subject) and enforced by
+    the server-side access window [access_start, access_end].
+
+    Papers without access_start/access_end are always accessible
+    (backward-compatible behaviour).
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = FinalPaperSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.role != "student":
+            return FinalPapers.objects.none()
+
+        now = timezone.now()
+        qs = FinalPapers.objects.filter(
+            course=user.course,
+            semester=user.semester,
+            branch=user.branch,
+            subject=user.subject,
+        )
+        # Exclude papers whose start time is in the future
+        qs = qs.filter(Q(access_start__isnull=True) | Q(access_start__lte=now))
+        # Exclude papers whose end time has already passed
+        qs = qs.filter(Q(access_end__isnull=True) | Q(access_end__gte=now))
+        return qs.order_by("-access_start")

@@ -4,6 +4,15 @@ from .models import Request, FinalPapers, SubjectCode
 
 User = get_user_model()
 
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["id", "username", "first_name", "last_name", "role",
+                  "course", "semester", "branch", "subject"]
+        read_only_fields = fields
+
+
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
 

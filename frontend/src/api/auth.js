@@ -10,9 +10,6 @@ export const getSubjectCodes = () =>
   client.get("subject-codes/");
 
 // Teacher
-export const getTeacherRequests = () =>
-  client.get("teacher/requests/");
-
 export const acceptRequest = (id) =>
   client.post(`teacher/requests/${id}/accept/`);
 
@@ -63,3 +60,10 @@ export const scrutinySyncVTU = (payload) =>
 
 export const getDecryptInfo = (paper_id) =>
   client.get(`sup/final-papers/${paper_id}/decrypt-info/`);
+
+// Student
+export const getStudentMe = () =>
+  client.get("student/me/");
+
+export const getStudentFinalPapers = () =>
+  client.get("student/final-papers/");

@@ -23,8 +23,16 @@ urlpatterns = [
     path("coe/teachers/", v.COEGetTeachers),                     # search teachers (returns default files if configured)
     path("coe/requests/add/", v.COEAddTeacher),                  # create request (uses subject defaults if files not sent)
     path("coe/candidates/", v.COECandidates),                    # GET ?s_code=...
+    path(
+        "coe/requests/<int:req_id>/select/",
+        v.COESelectCandidate,
+    ),
     path("coe/requests/<int:req_id>/finalize/", v.COEFinalize),  # finalize chosen candidate
 
     path("sup/final-papers/", v.SuperintendentListFinal.as_view()),
     path("sup/final-papers/<int:paper_id>/decrypt-info/", v.SuperintendentGetDecryptInfo),
+
+    # Student
+    path("student/me/", v.StudentMe.as_view()),
+    path("student/final-papers/", v.StudentFinalPapers.as_view()),
 ]

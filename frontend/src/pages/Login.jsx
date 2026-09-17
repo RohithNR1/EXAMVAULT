@@ -26,6 +26,14 @@ export default function Login() {
       localStorage.setItem("role", data.role);
       localStorage.setItem("username", data.username);
 
+      // Persist student profile fields for server-side access-window filtering
+      if (data.role === "student") {
+        localStorage.setItem("course", data.course || "");
+        localStorage.setItem("semester", data.semester || "");
+        localStorage.setItem("branch", data.branch || "");
+        localStorage.setItem("subject", data.subject || "");
+      }
+
       if (data.role === "teacher") nav("/teacher");
       else if (data.role === "coe") nav("/coe");
       else if (data.role === "student") nav("/student");
