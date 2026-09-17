@@ -1,6 +1,5 @@
 from django.db import models
 from exams.models import Request
-from django.contrib.postgres.fields import JSONField  # If using Django < 4.2; Django 5 has models.JSONField
 
 class ScrutinyResult(models.Model):
     request_obj = models.ForeignKey(Request, on_delete=models.CASCADE, null=True, blank=True)
