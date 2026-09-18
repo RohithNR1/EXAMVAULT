@@ -40,6 +40,62 @@ logger = logging.getLogger(__name__)
 _security_logger = logging.getLogger("examvault.security")
 User = get_user_model()
 
+
+def _enforce_paper_access_window(fp, user):
+    """
+    Server-side time-window enforcement for finalized papers.
+
+    Returns a Response if access must be denied, or None if the caller
+    should proceed. The check is intentionally coarse-grained at the
+    endpoint boundary — RBAC and profile checks remain the caller's
+    responsibility.
+
+    - Papers without an access_start/access_end are treated as always
+      accessible (backward-compatible behaviour).
+    - Students that do not match the paper's profile are NOT rejected
+      here; they are handled by caller-level profile guards.
+    - Audit events are logged only for time-window denials against
+      authorized actors.
+    """
+    now = timezone.now()
+    if fp.access_start and now < fp.access_start:
+        log_event(
+            action="access.window_not_yet",
+            actor=user.username,
+            role=user.role,
+            paper_id=fp.id,
+            s_code=fp.s_code,
+            detail={"reason": "access_start in future"},
+            severity="warn",
+        )
+        return Response({"detail": "Access not yet available"}, status=403)
+    if fp.access_end and now > fp.access_end:
+        log_event(
+            action="access.window_expired",
+            actor=user.username,
+            role=user.role,
+            paper_id=fp.id,
+            s_code=fp.s_code,
+            detail={"reason": "access_end passed"},
+            severity="warn",
+        )
+        return Response({"detail": "Access has expired"}, status=403)
+    return None
+
+
+def _apply_access_window_filter(qs):
+    """
+    Filter a FinalPapers queryset so that papers outside their
+    [access_start, access_end] window are excluded.
+    Papers with a null access window remain visible for backward
+    compatibility.
+    """
+    now = timezone.now()
+    qs = qs.filter(Q(access_start__isnull=True) | Q(access_start__lte=now))
+    qs = qs.filter(Q(access_end__isnull=True) | Q(access_end__gte=now))
+    return qs
+
+
 def _tokens_for_user(user):
     refresh = RefreshToken.for_user(user)
     return {"refresh": str(refresh), "access": str(refresh.access_token)}
@@ -516,7 +572,8 @@ class TeacherMyFinalPapers(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        return FinalPapers.objects.filter(subject=user.subject, branch=user.branch, semester=user.semester, course=user.course).order_by("-id")
+        qs = FinalPapers.objects.filter(subject=user.subject, branch=user.branch, semester=user.semester, course=user.course)
+        return _apply_access_window_filter(qs)
 
 
 # -------- COE -----------
@@ -1184,7 +1241,10 @@ def StudentVerifyPaper(request, paper_id):
 class SuperintendentListFinal(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = FinalPaperSerializer
-    queryset = FinalPapers.objects.all().order_by("-id")
+
+    def get_queryset(self):
+        qs = FinalPapers.objects.all().order_by("-id")
+        return _apply_access_window_filter(qs)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -1192,6 +1252,12 @@ def SuperintendentGetDecryptInfo(request, paper_id):
     fp = FinalPapers.objects.filter(id=paper_id).first()
     if not fp:
         return Response({"detail": "Not found"}, status=404)
+
+    # Enforce time-window before exposing any decrypt info.
+    deny = _enforce_paper_access_window(fp, request.user)
+    if deny is not None:
+        return deny
+
     log_event(
         action="sup.decrypt_info_viewed",
         actor=request.user.username,
