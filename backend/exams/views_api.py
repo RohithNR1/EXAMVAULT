@@ -18,13 +18,14 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate, get_user_model
 
 from .serializers import UserSerializer, RegisterSerializer, LoginSerializer
-from .serializers import SubjectCodeSerializer, RequestSerializer, FinalPaperSerializer
+from .serializers import SubjectCodeSerializer, RequestSerializer, FinalPaperSerializer, AuditLogSerializer
 from .throttles import AuthRateThrottle
 from .models import *
 from .encryption import encrypt_file, decrypt_file, wrap_fernet_key
 from .a_encryption import a_encryption, a_decryption
 from .ipfs_utils import add_file, get_file, get_ipfs_api_url, pin, is_pinned, verify_cid, check_ipfs_available as get_ipfs_available
 from .blockchain import record_cid, verify_cid, BlockchainConnectionError, BlockchainRecordNotFoundError, BlockchainError
+from .audit import log_event
 
 # Import scrutiny analyzer (comprehensive)
 try:
@@ -116,12 +117,26 @@ class TeacherAcceptedRequests(generics.ListAPIView):
 def TeacherAcceptRequest(request, req_id):
     if request.user.role != "teacher":
         _security_logger.warning("Role violation: user %s attempted teacher action (accept)", request.user.username)
+        log_event(
+            action="role.violation.accept",
+            actor=request.user.username,
+            role=request.user.role,
+            detail={"reason": "non-teacher role", "req_id": req_id},
+            severity="warn",
+        )
         return Response({"detail": "Forbidden"}, status=403)
     r = Request.objects.filter(id=req_id, tusername=request.user.username).first()
     if not r:
         return Response({"detail": "Not found"}, status=404)
     r.status = "Accepted"
     r.save()
+    log_event(
+        action="request.accepted",
+        actor=request.user.username,
+        role=request.user.role,
+        detail={"req_id": req_id},
+        severity="info",
+    )
     return Response({"message": "Accepted"})
 
 @api_view(["POST"])
@@ -130,12 +145,26 @@ def TeacherAcceptRequest(request, req_id):
 def TeacherRejectRequest(request, req_id):
     if request.user.role != "teacher":
         _security_logger.warning("Role violation: user %s attempted teacher action (reject)", request.user.username)
+        log_event(
+            action="role.violation.reject",
+            actor=request.user.username,
+            role=request.user.role,
+            detail={"reason": "non-teacher role", "req_id": req_id},
+            severity="warn",
+        )
         return Response({"detail": "Forbidden"}, status=403)
     r = Request.objects.filter(id=req_id, tusername=request.user.username).first()
     if not r:
         return Response({"detail": "Not found"}, status=404)
     r.status = "Rejected"
     r.save()
+    log_event(
+        action="request.rejected",
+        actor=request.user.username,
+        role=request.user.role,
+        detail={"req_id": req_id},
+        severity="info",
+    )
     return Response({"message": "Rejected"})
 
 
@@ -148,6 +177,13 @@ class TeacherUploadPaper(generics.GenericAPIView):
             _security_logger.warning(
                 "Role violation: user %s (role=%s) attempted teacher upload on request %s",
                 request.user.username, request.user.role, req_id,
+            )
+            log_event(
+                action="role.violation.upload",
+                actor=request.user.username,
+                role=request.user.role,
+                detail={"reason": "non-teacher role", "req_id": req_id},
+                severity="warn",
             )
             return Response({"detail": "Forbidden"}, status=403)
 
@@ -337,25 +373,69 @@ class TeacherUploadPaper(generics.GenericAPIView):
                             "TeacherUploadPaper: blockchain CID mismatch after write for s_code=%s stored=%s on_chain=%s",
                             r.s_code, cid, verified_record["cid"],
                         )
+                        log_event(
+                            action="blockchain.cid_mismatch",
+                            actor=request.user.username,
+                            role=request.user.role,
+                            s_code=r.s_code,
+                            detail={
+                                "reason": "stored_cid != on_chain_cid",
+                                "stored_cid": cid,
+                                "on_chain_cid": verified_record["cid"],
+                            },
+                            severity="error",
+                        )
                 except BlockchainRecordNotFoundError:
                     _security_logger.error(
                         "TeacherUploadPaper: blockchain record not found after write for s_code=%s",
                         r.s_code,
+                    )
+                    log_event(
+                        action="blockchain.record_missing",
+                        actor=request.user.username,
+                        role=request.user.role,
+                        s_code=r.s_code,
+                        detail={"reason": "record not found after write"},
+                        severity="error",
                     )
                 except BlockchainConnectionError as exc:
                     _security_logger.error(
                         "TeacherUploadPaper: blockchain verification failed after write for s_code=%s: %s",
                         r.s_code, exc,
                     )
+                    log_event(
+                        action="blockchain.verify_failed",
+                        actor=request.user.username,
+                        role=request.user.role,
+                        s_code=r.s_code,
+                        detail={"reason": str(exc)},
+                        severity="error",
+                    )
                 except BlockchainError as exc:
                     _security_logger.error(
                         "TeacherUploadPaper: blockchain verify error after write for s_code=%s: %s",
                         r.s_code, exc,
                     )
+                    log_event(
+                        action="blockchain.verify_error",
+                        actor=request.user.username,
+                        role=request.user.role,
+                        s_code=r.s_code,
+                        detail={"reason": str(exc)},
+                        severity="error",
+                    )
             except BlockchainConnectionError as exc:
                 _security_logger.error(
                     "TeacherUploadPaper: blockchain record failure for s_code=%s: %s",
                     r.s_code, exc,
+                )
+                log_event(
+                    action="blockchain.record_failed",
+                    actor=request.user.username,
+                    role=request.user.role,
+                    s_code=r.s_code,
+                    detail={"reason": str(exc)},
+                    severity="error",
                 )
                 return Response({"detail": "Blockchain service unavailable"}, status=503)
             except BlockchainError as exc:
@@ -363,7 +443,24 @@ class TeacherUploadPaper(generics.GenericAPIView):
                     "TeacherUploadPaper: blockchain error for s_code=%s: %s",
                     r.s_code, exc,
                 )
+                log_event(
+                    action="blockchain.record_error",
+                    actor=request.user.username,
+                    role=request.user.role,
+                    s_code=r.s_code,
+                    detail={"reason": str(exc)},
+                    severity="error",
+                )
                 return Response({"detail": "Blockchain recording failed"}, status=500)
+
+            log_event(
+                action="paper.uploaded",
+                actor=request.user.username,
+                role=request.user.role,
+                s_code=r.s_code,
+                detail={"req_id": req_id, "ipfs_cid": cid, "tx_hash": tx_hash},
+                severity="info",
+            )
 
             # cleanup temporary files
             try:
@@ -719,18 +816,54 @@ def StudentDownloadPaper(request, paper_id):
                 "Student %s attempted unauthorized download of paper_id=%s",
                 user.username, paper_id,
             )
+            log_event(
+                action="download.profile_mismatch",
+                actor=user.username,
+                role=user.role,
+                paper_id=paper_id,
+                s_code=fp.s_code,
+                detail={"reason": "profile mismatch"},
+                severity="warn",
+            )
             return Response({"detail": "Forbidden"}, status=403)
 
         now = timezone.now()
         if fp.access_start and now < fp.access_start:
+            log_event(
+                action="download.access_not_yet",
+                actor=user.username,
+                role=user.role,
+                paper_id=paper_id,
+                s_code=fp.s_code,
+                detail={"reason": "access_start in future"},
+                severity="warn",
+            )
             return Response({"detail": "Access not yet available"}, status=403)
         if fp.access_end and now > fp.access_end:
+            log_event(
+                action="download.access_expired",
+                actor=user.username,
+                role=user.role,
+                paper_id=paper_id,
+                s_code=fp.s_code,
+                detail={"reason": "access_end passed"},
+                severity="warn",
+            )
             return Response({"detail": "Access has expired"}, status=403)
 
     # Must have an encrypted CID (Phase 4.1 requirement)
     if not fp.encrypted_cid:
         _security_logger.warning(
             "paper_id=%s has no encrypted_cid; reject download", paper_id
+        )
+        log_event(
+            action="download.no_encrypted_cid",
+            actor=user.username,
+            role=user.role,
+            paper_id=paper_id,
+            s_code=fp.s_code,
+            detail={"reason": "legacy paper without encrypted CID"},
+            severity="warn",
         )
         return Response({"detail": "Paper not available for secure download"}, status=404)
 
@@ -766,6 +899,15 @@ def StudentDownloadPaper(request, paper_id):
     from django.http import HttpResponse
     response = HttpResponse(decrypted.read(), content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{fp.s_code}.pdf"'
+    log_event(
+        action="download.success",
+        actor=user.username,
+        role=user.role,
+        paper_id=paper_id,
+        s_code=fp.s_code,
+        detail={"reason": "successful decrypted download"},
+        severity="info",
+    )
     return response
 
 
@@ -800,12 +942,39 @@ def StudentVerifyPaper(request, paper_id):
                 "Student %s attempted unauthorized verify of paper_id=%s",
                 user.username, paper_id,
             )
+            log_event(
+                action="verify.profile_mismatch",
+                actor=user.username,
+                role=user.role,
+                paper_id=paper_id,
+                s_code=fp.s_code,
+                detail={"reason": "profile mismatch"},
+                severity="warn",
+            )
             return Response({"detail": "Forbidden"}, status=403)
 
         now = timezone.now()
         if fp.access_start and now < fp.access_start:
+            log_event(
+                action="verify.access_not_yet",
+                actor=user.username,
+                role=user.role,
+                paper_id=paper_id,
+                s_code=fp.s_code,
+                detail={"reason": "access_start in future"},
+                severity="warn",
+            )
             return Response({"detail": "Access not yet available"}, status=403)
         if fp.access_end and now > fp.access_end:
+            log_event(
+                action="verify.access_expired",
+                actor=user.username,
+                role=user.role,
+                paper_id=paper_id,
+                s_code=fp.s_code,
+                detail={"reason": "access_end passed"},
+                severity="warn",
+            )
             return Response({"detail": "Access has expired"}, status=403)
 
     # Legacy paper without encrypted_cid — cannot verify
@@ -829,6 +998,15 @@ def StudentVerifyPaper(request, paper_id):
             "Blockchain RPC unavailable during verify paper_id=%s s_code=%s: %s",
             paper_id, fp.s_code, exc,
         )
+        log_event(
+            action="verify.blockchain_unavailable",
+            actor=user.username,
+            role=user.role,
+            paper_id=paper_id,
+            s_code=fp.s_code,
+            detail={"reason": str(exc)},
+            severity="error",
+        )
         return Response({
             "verified": False,
             "stored_cid": stored_cid,
@@ -838,6 +1016,15 @@ def StudentVerifyPaper(request, paper_id):
             "message": "Blockchain service unavailable. Please try again later.",
         }, status=503)
     except BlockchainRecordNotFoundError:
+        log_event(
+            action="verify.record_not_found",
+            actor=user.username,
+            role=user.role,
+            paper_id=paper_id,
+            s_code=fp.s_code,
+            detail={"reason": "no blockchain record"},
+            severity="warn",
+        )
         return Response({
             "verified": False,
             "stored_cid": stored_cid,
@@ -850,6 +1037,15 @@ def StudentVerifyPaper(request, paper_id):
         _security_logger.error(
             "Blockchain verify error paper_id=%s s_code=%s: %s",
             paper_id, fp.s_code, exc,
+        )
+        log_event(
+            action="verify.blockchain_error",
+            actor=user.username,
+            role=user.role,
+            paper_id=paper_id,
+            s_code=fp.s_code,
+            detail={"reason": str(exc)},
+            severity="error",
         )
         return Response({
             "verified": False,
@@ -868,11 +1064,33 @@ def StudentVerifyPaper(request, paper_id):
 
     if matched:
         message = "Verified on-chain"
+        log_event(
+            action="verify.success",
+            actor=user.username,
+            role=user.role,
+            paper_id=paper_id,
+            s_code=fp.s_code,
+            detail={"reason": "CID matches blockchain record"},
+            severity="info",
+        )
     else:
         message = "CID mismatch: stored CID does not match the blockchain record."
         _security_logger.warning(
             "CID mismatch detected paper_id=%s s_code=%s stored=%s on_chain=%s",
             paper_id, fp.s_code, stored_cid, on_chain_cid,
+        )
+        log_event(
+            action="verify.cid_mismatch",
+            actor=user.username,
+            role=user.role,
+            paper_id=paper_id,
+            s_code=fp.s_code,
+            detail={
+                "reason": "stored_cid != on_chain_cid",
+                "stored_cid": stored_cid,
+                "on_chain_cid": on_chain_cid,
+            },
+            severity="error",
         )
 
     return Response({
@@ -903,6 +1121,69 @@ def SuperintendentGetDecryptInfo(request, paper_id):
         "exam_datetime": fp.exam_datetime,
         "access_start": fp.access_start,
         "access_end": fp.access_end,
+    })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def SuperintendentAuditLog(request):
+    """
+    Read-only audit log endpoint for superintendents/admins.
+    Supports optional filtering by action, s_code, start date, end date.
+    Returns newest records first with pagination.
+    """
+    user = request.user
+    if user.role not in ("superintendent", "admin") and not user.is_superuser:
+        return Response({"detail": "Forbidden"}, status=403)
+
+    qs = AuditLog.objects.all()
+
+    # Apply filters
+    action = request.GET.get("action")
+    if action:
+        qs = qs.filter(action=action)
+
+    s_code = request.GET.get("s_code")
+    if s_code:
+        qs = qs.filter(s_code=s_code)
+
+    start = request.GET.get("start")
+    if start:
+        try:
+            from django.utils import parse_date
+            start_dt = parse_date(start)
+            if start_dt:
+                qs = qs.filter(timestamp__gte=start_dt)
+        except Exception:
+            pass
+
+    end = request.GET.get("end")
+    if end:
+        try:
+            from django.utils import parse_date
+            end_dt = parse_date(end)
+            if end_dt:
+                qs = qs.filter(timestamp__lte=end_dt)
+        except Exception:
+            pass
+
+    # Pagination
+    page = int(request.GET.get("page", 1))
+    page_size = min(int(request.GET.get("page_size", 50)), 100)
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+
+    total = qs.count()
+    results = qs[start_idx:end_idx]
+
+    serializer = AuditLogSerializer(results, many=True)
+
+    return Response({
+        "count": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+        "results": serializer.data,
     })
 
 

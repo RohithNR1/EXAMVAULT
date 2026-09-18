@@ -1,3 +1,6 @@
+import time
+from unittest.mock import patch
+
 from django.test import TestCase
 from django.utils import timezone
 from datetime import timedelta
@@ -678,4 +681,177 @@ class BlockchainVerificationTests(TestCase):
             self.assertEqual(resp.status_code, 500)
             self.assertFalse(resp.data["verified"])
             self.assertNotIn("verified", resp.data.get("message", "").lower())
+
+
+class AuditLoggingTests(TestCase):
+    """Tests for Phase 4.4 formal persistent queryable audit logging."""
+
+    def setUp(self):
+        from exams.models import AuditLog
+        self.AuditLog = AuditLog
+        self.factory = APIRequestFactory()
+        self.teacher = CustomUser.objects.create_user(
+            username="teacher1", password="secret123", role="teacher",
+        )
+        self.superintendent = CustomUser.objects.create_user(
+            username="super1", password="secret123", role="superintendent",
+        )
+        self.admin = CustomUser.objects.create_superuser(
+            username="admin1", password="secret123", email="a@b.c",
+        )
+        self.student = CustomUser.objects.create_user(
+            username="alice", password="secret123", role="student",
+            course="B.E.", semester="V", branch="CSE", subject="MACHINE LEARNING",
+        )
+        self.p1 = FinalPapers.objects.create(
+            s_code="15CS51", course="B.E.", semester="V", branch="CSE", subject="MACHINE LEARNING",
+        )
+        self.p2 = FinalPapers.objects.create(
+            s_code="15CS52", course="B.E.", semester="V", branch="CSE", subject="MACHINE LEARNING",
+        )
+
+    # ---- log_event helper ----
+
+    def test_log_event_creates_record(self):
+        from exams.audit import log_event
+        before = self.AuditLog.objects.count()
+        log_event(action="test.ping", actor="teacher1", role="teacher", detail={"status": "ok"}, paper_id=self.p1.id, s_code="15CS51")
+        after = self.AuditLog.objects.count()
+        self.assertEqual(after, before + 1)
+        latest = self.AuditLog.objects.order_by("-timestamp").first()
+        self.assertEqual(latest.actor_username, "teacher1")
+        self.assertEqual(latest.action, "test.ping")
+        self.assertEqual(latest.paper_id, self.p1.id)
+        self.assertEqual(latest.s_code, "15CS51")
+        self.assertEqual(latest.severity, "info")
+        self.assertIn("test.ping", latest.detail)
+
+    def test_log_event_persists_warn_severity(self):
+        from exams.audit import log_event
+        log_event(action="x.warn", actor="t", role="teacher", severity="warn")
+        rec = self.AuditLog.objects.latest("id")
+        self.assertEqual(rec.severity, "warn")
+
+    def test_log_event_persists_error_severity(self):
+        from exams.audit import log_event
+        log_event(action="x.err", actor="t", role="teacher", severity="error")
+        rec = self.AuditLog.objects.latest("id")
+        self.assertEqual(rec.severity, "error")
+
+    def test_log_event_filters_sensitive_keys(self):
+        """Sensitive keys like password/token must not appear in the detail column."""
+        from exams.audit import log_event
+        log_event(
+            action="test.secret",
+            actor="teacher1",
+            role="teacher",
+            detail={"password": "s3cret", "token": "abc", "ip_address": "1.2.3.4", "message": "hello"},
+        )
+        rec = self.AuditLog.objects.latest("id")
+        parsed_detail = rec.detail  # raw JSON string
+        self.assertNotIn("s3cret", parsed_detail)
+        self.assertNotIn("abc", parsed_detail)
+        self.assertIn("1.2.3.4", parsed_detail)
+        self.assertIn("hello", parsed_detail)
+
+    def test_log_event_db_failure_is_isolated(self):
+        """If DB write fails, the caller should never see an exception."""
+        from exams.audit import log_event
+        from django.db import IntegrityError
+        with patch.object(self.AuditLog.objects, "create", side_effect=IntegrityError("dup key")):
+            # Should NOT raise
+            log_event(action="test.isolate", actor="t", role="teacher")
+
+    # ---- SuperintendentAuditLog endpoint ----
+
+    def _audit_request(self, user, params=None):
+        qs = ""
+        if params:
+            from urllib.parse import urlencode
+            qs = "?" + urlencode(params)
+        request = self.factory.get(f"/api/sup/audit-log/{qs}")
+        force_authenticate(request, user=user)
+        from exams.views_api import SuperintendentAuditLog
+        return SuperintendentAuditLog(request)
+
+    def test_audit_log_unauthenticated_returns_401(self):
+        request = self.factory.get("/api/sup/audit-log/")
+        from exams.views_api import SuperintendentAuditLog
+        resp = SuperintendentAuditLog(request)
+        self.assertEqual(resp.status_code, 401)
+
+    def test_audit_log_teacher_forbidden(self):
+        resp = self._audit_request(self.teacher)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_audit_log_student_forbidden(self):
+        resp = self._audit_request(self.student)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_audit_log_superintendent_allowed(self):
+        resp = self._audit_request(self.superintendent)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("count", resp.data)
+        self.assertIn("results", resp.data)
+        self.assertIn("page", resp.data)
+        self.assertIn("total_pages", resp.data)
+
+    def test_audit_log_admin_allowed(self):
+        resp = self._audit_request(self.admin)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_audit_log_pagination_structure(self):
+        resp = self._audit_request(self.superintendent)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.data
+        self.assertIsInstance(data["results"], list)
+        self.assertIsInstance(data["count"], int)
+        self.assertIsInstance(data["page"], int)
+        self.assertIsInstance(data["total_pages"], int)
+
+    def test_audit_log_records_order_newest_first(self):
+        from exams.audit import log_event
+        log_event(action="z.last", actor="t", role="teacher")
+        time.sleep(0.05)
+        log_event(action="a.first", actor="t", role="teacher")
+        resp = self._audit_request(self.superintendent)
+        results = resp.data["results"]
+        self.assertGreaterEqual(len(results), 2)
+        self.assertEqual(results[0]["action"], "a.first")
+        self.assertEqual(results[1]["action"], "z.last")
+
+    def test_audit_log_filter_by_action(self):
+        from exams.audit import log_event
+        log_event(action="x.filter_test", actor="t", role="teacher")
+        resp = self._audit_request(self.superintendent, {"action": "x.filter_test"})
+        self.assertEqual(resp.status_code, 200)
+        for rec in resp.data["results"]:
+            self.assertEqual(rec["action"], "x.filter_test")
+
+    def test_audit_log_filter_by_s_code(self):
+        from exams.audit import log_event
+        log_event(action="x.sc_test", actor="t", role="teacher", s_code="15CS51")
+        resp = self._audit_request(self.superintendent, {"s_code": "15CS51"})
+        self.assertEqual(resp.status_code, 200)
+        for rec in resp.data["results"]:
+            self.assertEqual(rec["s_code"], "15CS51")
+
+    def test_audit_log_serialized_fields_are_read_only(self):
+        from exams.serializers import AuditLogSerializer
+        serializer = AuditLogSerializer()
+        self.assertEqual(set(serializer.fields.keys()), {
+            "id", "timestamp", "actor_username", "actor_role", "action",
+            "paper_id", "s_code", "detail", "severity",
+        })
+        for field in serializer.fields.values():
+            self.assertTrue(field.read_only)
+
+    def test_audit_log_model_has_indexes(self):
+        """AuditLog defines composite indexes on (action, -timestamp), (s_code, -timestamp), (severity, -timestamp)."""
+        from django.db import connection
+        with connection.schema_editor() as schema_editor:
+            indexes = self.AuditLog._meta.indexes
+        # We just verify there are 3 indexes defined on the model;
+        # their exact autogenerated names differ across DB backends.
+        self.assertEqual(len(indexes), 3)
 

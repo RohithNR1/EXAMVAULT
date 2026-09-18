@@ -125,6 +125,38 @@ class FinalPapers(models.Model):
         return self.s_code
 
 
+# Severity choices shared between model and helper.
+AUDIT_SEVERITY = (
+    ("info", "Info"),
+    ("warn", "Warn"),
+    ("error", "Error"),
+)
+
+
+class AuditLog(models.Model):
+    """Persistent, queryable audit trail for security-relevant events."""
+
+    timestamp = models.DateTimeField(auto_now_add=True)
+    actor_username = models.CharField(max_length=150, db_index=True)
+    actor_role = models.CharField(max_length=20, db_index=True)
+    action = models.CharField(max_length=100, db_index=True)
+    paper_id = models.IntegerField(null=True, blank=True)
+    s_code = models.CharField(max_length=7, null=True, blank=True, db_index=True)
+    detail = models.TextField(blank=True, default="")
+    severity = models.CharField(max_length=10, choices=AUDIT_SEVERITY, default="info")
+
+    class Meta:
+        ordering = ("-timestamp",)
+        indexes = [
+            models.Index(fields=["action", "-timestamp"]),
+            models.Index(fields=["s_code", "-timestamp"]),
+            models.Index(fields=["severity", "-timestamp"]),
+        ]
+
+    def __str__(self):
+        return f"{self.timestamp.isoformat()} {self.actor_username} [{self.severity}] {self.action}"
+
+
 class SubjectCode(models.Model):
     s_code = models.CharField(max_length=7)
     subject = models.CharField(max_length=40)

@@ -31,6 +31,7 @@ urlpatterns = [
 
     path("sup/final-papers/", v.SuperintendentListFinal.as_view()),
     path("sup/final-papers/<int:paper_id>/decrypt-info/", v.SuperintendentGetDecryptInfo),
+    path("sup/audit-log/", v.SuperintendentAuditLog),
 
     # Student
     path("student/me/", v.StudentMe.as_view()),

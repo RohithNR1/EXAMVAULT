@@ -61,6 +61,11 @@ export const scrutinySyncVTU = (payload) =>
 export const getDecryptInfo = (paper_id) =>
   client.get(`sup/final-papers/${paper_id}/decrypt-info/`);
 
+export const getAuditLog = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return client.get(`sup/audit-log/${qs ? "?" + qs : ""}`);
+};
+
 // Student
 export const getStudentMe = () =>
   client.get("student/me/");

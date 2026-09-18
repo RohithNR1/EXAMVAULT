@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Request, FinalPapers, SubjectCode
+from .models import Request, FinalPapers, SubjectCode, AuditLog
 
 User = get_user_model()
 
@@ -135,3 +135,20 @@ class FinalPaperSerializer(serializers.ModelSerializer):
         fields = ["id", "s_code", "course", "semester", "branch", "subject", "paper",
                   "access_start", "access_end", "encrypted_cid"]
         # encrypted_cid is exposed for verification/debugging; wrapped keys are not.
+
+
+class AuditLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AuditLog
+        fields = [
+            "id",
+            "timestamp",
+            "actor_username",
+            "actor_role",
+            "action",
+            "paper_id",
+            "s_code",
+            "detail",
+            "severity",
+        ]
+        read_only_fields = fields
