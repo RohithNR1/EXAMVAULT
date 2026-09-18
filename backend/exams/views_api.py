@@ -1,4 +1,5 @@
 # backend/exams/views_api.py
+import base64
 import os
 import tempfile
 import logging
@@ -51,6 +52,13 @@ def register_user(request):
     ser = RegisterSerializer(data=request.data)
     if ser.is_valid():
         user = ser.save()
+        log_event(
+            action="auth.register",
+            actor=user.username,
+            role=user.role,
+            detail={"message": "new account created"},
+            severity="info",
+        )
         return Response({"message": "Registered", "username": user.username}, status=201)
     return Response(ser.errors, status=400)
 
@@ -64,6 +72,13 @@ def login_user(request):
     if not user:
         logger.warning("Failed login attempt for username=%s ip=%s", ser.validated_data["username"], request.META.get("REMOTE_ADDR"))
         _security_logger.warning("Failed login attempt for username=%s ip=%s", ser.validated_data["username"], request.META.get("REMOTE_ADDR"))
+        log_event(
+            action="auth.login.failed",
+            actor=ser.validated_data["username"],
+            role="unknown",
+            detail={"reason": "invalid credentials"},
+            severity="warn",
+        )
         return Response({"detail": "Invalid credentials"}, status=401)
     t = _tokens_for_user(user)
     payload = {
@@ -78,6 +93,13 @@ def login_user(request):
             "branch": user.branch,
             "subject": user.subject,
         })
+    log_event(
+        action="auth.login.success",
+        actor=user.username,
+        role=user.role,
+        detail={"message": "authentication successful"},
+        severity="info",
+    )
     return Response(payload)
 
 # ------- COMMON ---------
@@ -629,6 +651,13 @@ def COEAddTeacher(request):
         status="Pending",
         total_marks=int(total_marks) if total_marks is not None else 100
     )
+    log_event(
+        action="request.created",
+        actor=request.user.username,
+        role=request.user.role,
+        detail={"message": "coe request created", "request_id": obj.id, "s_code": s_code},
+        severity="info",
+    )
     new_teacher = User.objects.filter(username=username).values()
     return Response({'new_teacher': list(new_teacher), 'request_id': obj.id}, status=201)
 
@@ -721,6 +750,15 @@ def COESelectCandidate(request, req_id):
         req.selected_at = timezone.now()
         req.save(update_fields=["selection_status", "selected_at"])
 
+    log_event(
+        action="paper.selected",
+        actor=request.user.username,
+        role=request.user.role,
+        paper_id=None,
+        s_code=req.s_code,
+        detail={"message": "candidate selected", "request_id": req.id},
+        severity="info",
+    )
     return Response({
         "message": "Candidate selected successfully",
         "selected_request_id": req.id,
@@ -768,12 +806,22 @@ def COEFinalize(request, req_id):
     )
     final.wrapped_iv = iv_hex
     final.wrapped_ct = ct_b64
-    final.paper.save(f"{req.s_code}.pdf", pdf_file, save=True)
+    from django.core.files.base import ContentFile
+    final.paper.save(f"{req.s_code}.pdf", ContentFile(enc_bytes), save=True)
 
     req.status = "Finalized"
     req.finalized_at = timezone.now()
     req.save()
 
+    log_event(
+        action="paper.finalized",
+        actor=request.user.username,
+        role=request.user.role,
+        paper_id=final.id,
+        s_code=req.s_code,
+        detail={"message": "paper finalized", "request_id": req.id},
+        severity="info",
+    )
     return Response({"message": "Finalized", "paper_id": final.id, "request_id": req.id})
 
 
@@ -1115,6 +1163,15 @@ def SuperintendentGetDecryptInfo(request, paper_id):
     fp = FinalPapers.objects.filter(id=paper_id).first()
     if not fp:
         return Response({"detail": "Not found"}, status=404)
+    log_event(
+        action="sup.decrypt_info_viewed",
+        actor=request.user.username,
+        role=request.user.role,
+        paper_id=paper_id,
+        s_code=fp.s_code,
+        detail={"message": "decrypt info accessed"},
+        severity="info",
+    )
     return Response({
         "s_code": fp.s_code,
         "paper_url": fp.paper.url if fp.paper else None,
