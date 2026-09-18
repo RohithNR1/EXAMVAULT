@@ -492,3 +492,190 @@ class IPFSReliabilityTests(TestCase):
         result = check_ipfs_available()
         self.assertIsInstance(result, bool)
 
+
+class BlockchainVerificationTests(TestCase):
+    """Phase 4.3 tests for blockchain verification."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.student = CustomUser.objects.create_user(
+            username="alice_bc", password="secret123",
+            role="student", course="B.E.", semester="V", branch="CSE",
+            subject="MACHINE LEARNING",
+        )
+        self.other_student = CustomUser.objects.create_user(
+            username="bob_bc", password="secret123",
+            role="student", course="B.E.", semester="I", branch="IT",
+            subject="Internet of Things",
+        )
+        now = timezone.now()
+        self.final_paper = FinalPapers.objects.create(
+            s_code="BC001",
+            course="B.E.",
+            semester="V",
+            branch="CSE",
+            subject="MACHINE LEARNING",
+            encrypted_cid="QmTestBlockChainCid",
+            wrapped_iv="dGVzdGl2MTIzNA==",
+            wrapped_ct="dGVzdGN0MTIzNDU2Nzg=",
+            access_start=now - timedelta(hours=1),
+            access_end=now + timedelta(days=1),
+        )
+        self.mismatch_paper = FinalPapers.objects.create(
+            s_code="BC002",
+            course="B.E.",
+            semester="V",
+            branch="CSE",
+            subject="MACHINE LEARNING",
+            encrypted_cid="QmStoredMismatchCid",
+            wrapped_iv="dGVzdGl2MTIzNA==",
+            wrapped_ct="dGVzdGN0MTIzNDU2Nzg=",
+            access_start=now - timedelta(hours=1),
+            access_end=now + timedelta(days=1),
+        )
+        self.no_cid_paper = FinalPapers.objects.create(
+            s_code="BC003",
+            course="B.E.",
+            semester="V",
+            branch="CSE",
+            subject="MACHINE LEARNING",
+            encrypted_cid="",
+            wrapped_iv="",
+            wrapped_ct="",
+            access_start=now - timedelta(hours=1),
+            access_end=now + timedelta(days=1),
+        )
+
+    def _verify_request(self, user, paper_id):
+        req = self.factory.get(f"/api/student/final-papers/{paper_id}/verify/")
+        force_authenticate(req, user=user)
+        return req
+
+    def test_blockchain_verify_returns_cid(self):
+        """Mock blockchain read returns the CID for the paper's s_code."""
+        from exams.views_api import StudentVerifyPaper
+        from exams.blockchain import verify_cid
+        from unittest.mock import patch, MagicMock
+
+        mock_record = {"s_code": "BC001", "cid": "QmTestBlockChainCid", "tx_hash": None, "timestamp": 1234567890}
+
+        with patch("exams.views_api.verify_cid") as mock_verify:
+            mock_verify.return_value = mock_record
+            req = self._verify_request(self.student, self.final_paper.id)
+            resp = StudentVerifyPaper(req, paper_id=self.final_paper.id)
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.data["on_chain_cid"], "QmTestBlockChainCid")
+            self.assertTrue(resp.data["verified"])
+
+    def test_blockchain_verify_matches_storage(self):
+        """Stored FinalPapers.encrypted_cid matches blockchain CID -> verified=true."""
+        from exams.views_api import StudentVerifyPaper
+        from unittest.mock import patch
+
+        mock_record = {"s_code": "BC001", "cid": "QmTestBlockChainCid", "tx_hash": None, "timestamp": 1234567890}
+
+        with patch("exams.views_api.verify_cid") as mock_verify:
+            mock_verify.return_value = mock_record
+            req = self._verify_request(self.student, self.final_paper.id)
+            resp = StudentVerifyPaper(req, paper_id=self.final_paper.id)
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.data["verified"])
+            self.assertEqual(resp.data["stored_cid"], "QmTestBlockChainCid")
+            self.assertEqual(resp.data["on_chain_cid"], "QmTestBlockChainCid")
+
+    def test_blockchain_verify_detects_cid_mismatch(self):
+        """Stored CID differs from blockchain CID -> verified=false."""
+        from exams.views_api import StudentVerifyPaper
+        from unittest.mock import patch
+
+        # Different CID on chain than stored
+        mock_record = {"s_code": "BC002", "cid": "QmOnChainDifferentCid", "tx_hash": None, "timestamp": 1234567890}
+
+        with patch("exams.views_api.verify_cid") as mock_verify:
+            mock_verify.return_value = mock_record
+            req = self._verify_request(self.student, self.mismatch_paper.id)
+            resp = StudentVerifyPaper(req, paper_id=self.mismatch_paper.id)
+            self.assertEqual(resp.status_code, 200)
+            self.assertFalse(resp.data["verified"])
+            self.assertEqual(resp.data["stored_cid"], "QmStoredMismatchCid")
+            self.assertEqual(resp.data["on_chain_cid"], "QmOnChainDifferentCid")
+            self.assertIn("mismatch", resp.data["message"].lower())
+
+    def test_blockchain_verify_requires_authorized_student(self):
+        """Another student's profile cannot verify another's paper."""
+        from exams.views_api import StudentVerifyPaper
+        from unittest.mock import patch
+
+        mock_record = {"s_code": "BC001", "cid": "QmTestBlockChainCid", "tx_hash": None, "timestamp": 1234567890}
+
+        with patch("exams.views_api.verify_cid") as mock_verify:
+            mock_verify.return_value = mock_record
+            req = self._verify_request(self.other_student, self.final_paper.id)
+            resp = StudentVerifyPaper(req, paper_id=self.final_paper.id)
+            self.assertEqual(resp.status_code, 403)
+
+    def test_blockchain_verify_handles_missing_record(self):
+        """Missing blockchain record is handled explicitly (not a crash)."""
+        from exams.views_api import StudentVerifyPaper
+        from exams.blockchain import BlockchainRecordNotFoundError
+        from unittest.mock import patch
+
+        with patch("exams.views_api.verify_cid") as mock_verify:
+            mock_verify.side_effect = BlockchainRecordNotFoundError("No record found")
+            req = self._verify_request(self.student, self.final_paper.id)
+            resp = StudentVerifyPaper(req, paper_id=self.final_paper.id)
+            self.assertEqual(resp.status_code, 200)
+            self.assertFalse(resp.data["verified"])
+            self.assertIn("No blockchain record", resp.data["message"])
+
+    def test_blockchain_verify_handles_rpc_failure(self):
+        """Simulated RPC failure produces service-unavailable behavior (503)."""
+        from exams.views_api import StudentVerifyPaper
+        from exams.blockchain import BlockchainConnectionError
+        from unittest.mock import patch
+
+        with patch("exams.views_api.verify_cid") as mock_verify:
+            mock_verify.side_effect = BlockchainConnectionError("RPC unavailable")
+            req = self._verify_request(self.student, self.final_paper.id)
+            resp = StudentVerifyPaper(req, paper_id=self.final_paper.id)
+            self.assertEqual(resp.status_code, 503)
+            self.assertIn("unavailable", resp.data["message"].lower())
+
+    def test_teacher_upload_verifies_blockchain_record(self):
+        """verify_cid() is called after record_cid() in TeacherUploadPaper source."""
+        import inspect
+        from exams.views_api import TeacherUploadPaper
+
+        src = inspect.getsource(TeacherUploadPaper.post)
+        # Find the line numbers where record_cid and verify_cid are called
+        record_line = None
+        verify_line = None
+        for i, line in enumerate(src.splitlines()):
+            if "record_cid(r.s_code" in line:
+                record_line = i
+            if "verify_cid(r.s_code)" in line:
+                verify_line = i
+
+        self.assertIsNotNone(record_line, "record_cid call not found in TeacherUploadPaper.post")
+        self.assertIsNotNone(verify_line, "verify_cid call not found in TeacherUploadPaper.post")
+        self.assertGreater(
+            verify_line, record_line,
+            "verify_cid must appear after record_cid in the source code"
+        )
+
+    def test_blockchain_failure_is_not_silent(self):
+        """Ensure blockchain verification failure is logged/handled rather than silently treated as success."""
+        from exams.views_api import StudentVerifyPaper
+        from exams.blockchain import BlockchainError
+        from unittest.mock import patch
+        import logging
+
+        with patch("exams.views_api.verify_cid") as mock_verify:
+            mock_verify.side_effect = BlockchainError("Contract read failed")
+            req = self._verify_request(self.student, self.final_paper.id)
+            resp = StudentVerifyPaper(req, paper_id=self.final_paper.id)
+            # Should return 500, not silently succeed
+            self.assertEqual(resp.status_code, 500)
+            self.assertFalse(resp.data["verified"])
+            self.assertNotIn("verified", resp.data.get("message", "").lower())
+

@@ -24,7 +24,7 @@ from .models import *
 from .encryption import encrypt_file, decrypt_file, wrap_fernet_key
 from .a_encryption import a_encryption, a_decryption
 from .ipfs_utils import add_file, get_file, get_ipfs_api_url, pin, is_pinned, verify_cid, check_ipfs_available as get_ipfs_available
-from .blockchain import record_cid
+from .blockchain import record_cid, verify_cid, BlockchainConnectionError, BlockchainRecordNotFoundError, BlockchainError
 
 # Import scrutiny analyzer (comprehensive)
 try:
@@ -320,11 +320,50 @@ class TeacherUploadPaper(generics.GenericAPIView):
                 # continue — we have IPFS CID, but encryption metadata failed; return partial success
                 return Response({"message":"Uploaded to IPFS but metadata saving failed", "cid": cid, "error": str(e)}, status=207)
 
-            # try record on blockchain (non-blocking)
+            # Record on blockchain and verify immediately after success
+            tx_hash = None
             try:
-                record_cid(r.s_code, cid)
-            except Exception:
-                logger.exception("TeacherUploadPaper: blockchain record failed (ignored)")
+                tx_hash = record_cid(r.s_code, cid)
+                # Immediate post-write verification
+                try:
+                    verified_record = verify_cid(r.s_code)
+                    if verified_record["cid"] == cid:
+                        logger.info(
+                            "TeacherUploadPaper: blockchain record verified ok for s_code=%s tx=%s",
+                            r.s_code, tx_hash,
+                        )
+                    else:
+                        _security_logger.error(
+                            "TeacherUploadPaper: blockchain CID mismatch after write for s_code=%s stored=%s on_chain=%s",
+                            r.s_code, cid, verified_record["cid"],
+                        )
+                except BlockchainRecordNotFoundError:
+                    _security_logger.error(
+                        "TeacherUploadPaper: blockchain record not found after write for s_code=%s",
+                        r.s_code,
+                    )
+                except BlockchainConnectionError as exc:
+                    _security_logger.error(
+                        "TeacherUploadPaper: blockchain verification failed after write for s_code=%s: %s",
+                        r.s_code, exc,
+                    )
+                except BlockchainError as exc:
+                    _security_logger.error(
+                        "TeacherUploadPaper: blockchain verify error after write for s_code=%s: %s",
+                        r.s_code, exc,
+                    )
+            except BlockchainConnectionError as exc:
+                _security_logger.error(
+                    "TeacherUploadPaper: blockchain record failure for s_code=%s: %s",
+                    r.s_code, exc,
+                )
+                return Response({"detail": "Blockchain service unavailable"}, status=503)
+            except BlockchainError as exc:
+                _security_logger.error(
+                    "TeacherUploadPaper: blockchain error for s_code=%s: %s",
+                    r.s_code, exc,
+                )
+                return Response({"detail": "Blockchain recording failed"}, status=500)
 
             # cleanup temporary files
             try:
@@ -728,6 +767,122 @@ def StudentDownloadPaper(request, paper_id):
     response = HttpResponse(decrypted.read(), content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{fp.s_code}.pdf"'
     return response
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def StudentVerifyPaper(request, paper_id):
+    """
+    Blockchain verification endpoint for a finalized exam paper.
+
+    Returns verification info comparing the stored encrypted_cid against
+    the on-chain record. Only the authorized student (or admin roles)
+    may access the result for a given paper.
+    """
+    fp = FinalPapers.objects.filter(id=paper_id).first()
+    if not fp:
+        return Response({"detail": "Paper not found"}, status=404)
+
+    user = request.user
+    if user.role not in ("student", "teacher", "superintendent"):
+        return Response({"detail": "Forbidden"}, status=403)
+
+    # Profile match enforcement for students (same boundary as download)
+    if user.role == "student":
+        profile_ok = (
+            fp.course == user.course
+            and fp.semester == user.semester
+            and fp.branch == user.branch
+            and fp.subject == user.subject
+        )
+        if not profile_ok:
+            _security_logger.warning(
+                "Student %s attempted unauthorized verify of paper_id=%s",
+                user.username, paper_id,
+            )
+            return Response({"detail": "Forbidden"}, status=403)
+
+        now = timezone.now()
+        if fp.access_start and now < fp.access_start:
+            return Response({"detail": "Access not yet available"}, status=403)
+        if fp.access_end and now > fp.access_end:
+            return Response({"detail": "Access has expired"}, status=403)
+
+    # Legacy paper without encrypted_cid — cannot verify
+    if not fp.encrypted_cid:
+        return Response({
+            "verified": False,
+            "stored_cid": None,
+            "on_chain_cid": None,
+            "tx_hash": None,
+            "timestamp": None,
+            "message": "Verification unavailable: paper was created before blockchain recording was configured.",
+        }, status=200)
+
+    stored_cid = fp.encrypted_cid
+
+    # Call blockchain verification
+    try:
+        record = verify_cid(fp.s_code)
+    except BlockchainConnectionError as exc:
+        _security_logger.warning(
+            "Blockchain RPC unavailable during verify paper_id=%s s_code=%s: %s",
+            paper_id, fp.s_code, exc,
+        )
+        return Response({
+            "verified": False,
+            "stored_cid": stored_cid,
+            "on_chain_cid": None,
+            "tx_hash": None,
+            "timestamp": None,
+            "message": "Blockchain service unavailable. Please try again later.",
+        }, status=503)
+    except BlockchainRecordNotFoundError:
+        return Response({
+            "verified": False,
+            "stored_cid": stored_cid,
+            "on_chain_cid": None,
+            "tx_hash": None,
+            "timestamp": None,
+            "message": "No blockchain record found for this paper.",
+        }, status=200)
+    except BlockchainError as exc:
+        _security_logger.error(
+            "Blockchain verify error paper_id=%s s_code=%s: %s",
+            paper_id, fp.s_code, exc,
+        )
+        return Response({
+            "verified": False,
+            "stored_cid": stored_cid,
+            "on_chain_cid": None,
+            "tx_hash": None,
+            "timestamp": None,
+            "message": "Blockchain verification failed due to an internal error.",
+        }, status=500)
+
+    on_chain_cid = record.get("cid")
+    tx_hash = record.get("tx_hash")
+    timestamp = record.get("timestamp")
+
+    matched = (stored_cid == on_chain_cid)
+
+    if matched:
+        message = "Verified on-chain"
+    else:
+        message = "CID mismatch: stored CID does not match the blockchain record."
+        _security_logger.warning(
+            "CID mismatch detected paper_id=%s s_code=%s stored=%s on_chain=%s",
+            paper_id, fp.s_code, stored_cid, on_chain_cid,
+        )
+
+    return Response({
+        "verified": matched,
+        "stored_cid": stored_cid,
+        "on_chain_cid": on_chain_cid,
+        "tx_hash": tx_hash,
+        "timestamp": timestamp,
+        "message": message,
+    }, status=200)
 
 
 # ----- SUPERINTENDENT -----

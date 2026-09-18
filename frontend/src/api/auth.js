@@ -73,3 +73,7 @@ export const downloadPaper = (paperId) =>
   client.get(`student/final-papers/${paperId}/download/`, {
     responseType: "blob",
   });
+
+// Phase 4.3: blockchain verification
+export const verifyPaper = (paperId) =>
+  client.get(`student/final-papers/${paperId}/verify/`);
