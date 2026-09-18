@@ -531,19 +531,9 @@ class COEListRequests(generics.ListAPIView):
         reqs = Request.objects.filter(status__in=["Pending", "Accepted", "Uploaded"]).order_by("-id")
         response_data = []
         for r in reqs:
-            try:
-                u = User.objects.get(username=r.tusername)
-                first_name = u.first_name
-                last_name = u.last_name
-            except User.DoesNotExist:
-                first_name = ""
-                last_name = ""
             response_data.append({
-                "id": r.id,
+                "candidate_id": f"CAND-{r.id:04d}",
                 "s_code": r.s_code,
-                "tusername": r.tusername,
-                "teacher_first_name": first_name,
-                "teacher_last_name": last_name,
                 "status": r.status,
                 "selection_status": r.selection_status,
                 "uploaded_at": r.uploaded_at,
@@ -665,6 +655,9 @@ def COEAddTeacher(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def COECandidates(request):
+    if request.user.role != "coe":
+        return Response({"detail": "Only COE users can access candidate list"}, status=403)
+
     s_code = request.query_params.get("s_code")
     if not s_code:
         return Response({"detail":"s_code query param required"}, status=400)
@@ -691,12 +684,6 @@ def COECandidates(request):
         return "poor"
 
     for idx, r in enumerate(candidates_list):
-        try:
-            u = User.objects.get(username=r.tusername)
-            tname = f"{u.first_name} {u.last_name}".strip()
-        except User.DoesNotExist:
-            tname = r.tusername
-
         scrutiny_payload = None
         if ScrutinyResult:
             scrutiny_obj = ScrutinyResult.objects.filter(request_obj=r).order_by("-created_at").first()
@@ -715,9 +702,7 @@ def COECandidates(request):
                 }
 
         response.append({
-            "id": r.id,
-            "teacher_username": r.tusername,
-            "teacher_name": tname,
+            "candidate_id": f"CAND-{r.id:04d}",
             "paper_number": f"Paper {idx+1}",
             "status": r.status,
             "selection_status": r.selection_status,
@@ -734,11 +719,33 @@ def COECandidates(request):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-def COESelectCandidate(request, req_id):
+def COESelectCandidate(request, req_id=None):
     if request.user.role != "coe":
         return Response({"detail": "Only COE users can perform this action"}, status=403)
 
-    req = Request.objects.filter(id=req_id).first()
+    # Resolve anonymous candidate_id to internal Request ID
+    requested_id = req_id
+    if requested_id is not None:
+        cid_str = str(requested_id)
+        if cid_str.startswith("CAND-"):
+            try:
+                requested_id = int(cid_str.replace("CAND-", ""))
+            except ValueError:
+                requested_id = None
+        else:
+            try:
+                requested_id = int(requested_id)
+            except ValueError:
+                requested_id = None
+    if requested_id is None:
+        candidate_id = request.data.get("candidate_id") or request.query_params.get("candidate_id")
+        if candidate_id:
+            try:
+                requested_id = int(str(candidate_id).replace("CAND-", ""))
+            except (ValueError, IndexError):
+                pass
+
+    req = Request.objects.filter(id=requested_id).first()
     if not req:
         return Response({"detail": "Not found"}, status=404)
     if req.status != "Uploaded":
@@ -768,11 +775,33 @@ def COESelectCandidate(request, req_id):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-def COEFinalize(request, req_id):
+def COEFinalize(request, req_id=None):
     if request.user.role != "coe":
         return Response({"detail": "Only COE users can perform this action"}, status=403)
 
-    req = Request.objects.filter(id=req_id).first()
+    # Resolve anonymous candidate_id to internal Request ID
+    requested_id = req_id
+    if requested_id is not None:
+        cid_str = str(requested_id)
+        if cid_str.startswith("CAND-"):
+            try:
+                requested_id = int(cid_str.replace("CAND-", ""))
+            except ValueError:
+                requested_id = None
+        else:
+            try:
+                requested_id = int(requested_id)
+            except ValueError:
+                requested_id = None
+    if requested_id is None:
+        candidate_id = request.data.get("candidate_id") or request.query_params.get("candidate_id")
+        if candidate_id:
+            try:
+                requested_id = int(str(candidate_id).replace("CAND-", ""))
+            except (ValueError, IndexError):
+                pass
+
+    req = Request.objects.filter(id=requested_id).first()
     if not req:
         return Response({"detail":"Not found"}, status=404)
     if req.status != "Uploaded":
