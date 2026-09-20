@@ -25,7 +25,7 @@ from .models import *
 from .encryption import encrypt_file, decrypt_file, wrap_fernet_key
 from .a_encryption import a_encryption, a_decryption
 from .ipfs_utils import add_file, get_file, get_ipfs_api_url, pin, is_pinned, verify_cid, check_ipfs_available as get_ipfs_available
-from .blockchain import record_cid, verify_cid, BlockchainConnectionError, BlockchainRecordNotFoundError, BlockchainError
+from .blockchain import record_cid, verify_cid, record_event, get_lifecycle_events, BlockchainConnectionError, BlockchainRecordNotFoundError, BlockchainError
 from .audit import log_event
 
 # Import scrutiny analyzer (comprehensive)
@@ -540,6 +540,17 @@ class TeacherUploadPaper(generics.GenericAPIView):
                 severity="info",
             )
 
+            # Phase 7: record lifecycle event on-chain
+            try:
+                evt_tx = record_event(r.s_code, "submitted", cid)
+                logger.info("TeacherUploadPaper: lifecycle event recorded on-chain s_code=%s tx=%s", r.s_code, evt_tx)
+            except BlockchainConnectionError as exc:
+                _security_logger.warning("TeacherUploadPaper: blockchain event record failed for s_code=%s: %s", r.s_code, exc)
+                log_event(action="blockchain.event_record_failed", actor=request.user.username, role=request.user.role, s_code=r.s_code, detail={"reason": str(exc)}, severity="warn")
+            except BlockchainError as exc:
+                _security_logger.error("TeacherUploadPaper: blockchain event error for s_code=%s: %s", r.s_code, exc)
+                log_event(action="blockchain.event_error", actor=request.user.username, role=request.user.role, s_code=r.s_code, detail={"reason": str(exc)}, severity="error")
+
             # cleanup temporary files
             try:
                 if os.path.exists(tmp_path):
@@ -823,6 +834,19 @@ def COESelectCandidate(request, req_id=None):
         detail={"message": "candidate selected", "request_id": req.id},
         severity="info",
     )
+
+    # Phase 7: record selection event on-chain (anonymous reference only)
+    try:
+        candidate_ref = f"CAND-{req.id}"
+        evt_tx = record_event(req.s_code, "selected", candidate_ref)
+        logger.info("COESelectCandidate: lifecycle event recorded on-chain s_code=%s tx=%s", req.s_code, evt_tx)
+    except BlockchainConnectionError as exc:
+        _security_logger.warning("COESelectCandidate: blockchain event record failed for s_code=%s: %s", req.s_code, exc)
+        log_event(action="blockchain.event_record_failed", actor=request.user.username, role=request.user.role, s_code=req.s_code, detail={"reason": str(exc)}, severity="warn")
+    except BlockchainError as exc:
+        _security_logger.error("COESelectCandidate: blockchain event error for s_code=%s: %s", req.s_code, exc)
+        log_event(action="blockchain.event_error", actor=request.user.username, role=request.user.role, s_code=req.s_code, detail={"reason": str(exc)}, severity="error")
+
     return Response({
         "message": "Candidate selected successfully",
         "selected_request_id": req.id,
@@ -908,6 +932,18 @@ def COEFinalize(request, req_id=None):
         detail={"message": "paper finalized", "request_id": req.id},
         severity="info",
     )
+
+    # Phase 7: record finalization event on-chain
+    try:
+        evt_tx = record_event(req.s_code, "finalized", final.encrypted_cid)
+        logger.info("COEFinalize: lifecycle event recorded on-chain s_code=%s tx=%s", req.s_code, evt_tx)
+    except BlockchainConnectionError as exc:
+        _security_logger.warning("COEFinalize: blockchain event record failed for s_code=%s: %s", req.s_code, exc)
+        log_event(action="blockchain.event_record_failed", actor=request.user.username, role=request.user.role, s_code=req.s_code, detail={"reason": str(exc)}, severity="warn")
+    except BlockchainError as exc:
+        _security_logger.error("COEFinalize: blockchain event error for s_code=%s: %s", req.s_code, exc)
+        log_event(action="blockchain.event_error", actor=request.user.username, role=request.user.role, s_code=req.s_code, detail={"reason": str(exc)}, severity="error")
+
     return Response({"message": "Finalized", "paper_id": final.id, "request_id": req.id})
 
 
@@ -1337,6 +1373,62 @@ def SuperintendentAuditLog(request):
         "total_pages": (total + page_size - 1) // page_size,
         "results": serializer.data,
     })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def SuperintendentLifecycleEvents(request, s_code):
+    """
+    Read-only blockchain lifecycle events for a subject code.
+    Restricted to superintendents/admins/superusers only.
+    Returns events ordered chronologically (oldest first).
+    """
+    user = request.user
+    if user.role not in ("superintendent", "admin") and not user.is_superuser:
+        return Response({"detail": "Forbidden"}, status=403)
+
+    try:
+        events = get_lifecycle_events(s_code)
+    except BlockchainRecordNotFoundError:
+        return Response({"s_code": s_code, "events": [], "count": 0})
+    except BlockchainConnectionError as exc:
+        _security_logger.warning(
+            "SuperintendentLifecycleEvents: blockchain RPC unavailable s_code=%s: %s",
+            s_code, exc,
+        )
+        log_event(
+            action="lifecycle_events.unavailable",
+            actor=request.user.username,
+            role=user.role,
+            s_code=s_code,
+            detail={"reason": str(exc)},
+            severity="error",
+        )
+        return Response({"detail": "Blockchain service unavailable"}, status=503)
+    except BlockchainError as exc:
+        _security_logger.error(
+            "SuperintendentLifecycleEvents: blockchain error s_code=%s: %s",
+            s_code, exc,
+        )
+        log_event(
+            action="lifecycle_events.error",
+            actor=request.user.username,
+            role=user.role,
+            s_code=s_code,
+            detail={"reason": str(exc)},
+            severity="error",
+        )
+        return Response({"detail": "Blockchain query failed"}, status=500)
+
+    log_event(
+        action="lifecycle_events.viewed",
+        actor=request.user.username,
+        role=user.role,
+        s_code=s_code,
+        detail={"message": "lifecycle events accessed", "count": len(events)},
+        severity="info",
+    )
+    return Response({"s_code": s_code, "events": events, "count": len(events)})
 
 
 # -------- STUDENT -----------

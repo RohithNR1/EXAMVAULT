@@ -21,6 +21,11 @@ class BlockchainRecordNotFoundError(BlockchainError):
     pass
 
 
+# Allowed lifecycle actions — kept explicit so invalid values are rejected
+# client-side before any transaction is submitted.
+_ALLOWED_LIFECYCLE_ACTIONS = frozenset({"submitted", "selected", "finalized"})
+
+
 def _web3():
     return Web3(Web3.HTTPProvider(settings.RPC_URL))
 
@@ -115,4 +120,89 @@ def verify_cid(s_code: str):
     except Exception as exc:
         raise BlockchainError(
             f"Blockchain verify failed for s_code={s_code}: {exc}"
+        ) from exc
+
+
+def get_lifecycle_events(s_code: str) -> list[dict]:
+    """
+    Read the full lifecycle event history for the given s_code from-chain.
+
+    Returns a list of dicts ordered chronologically (oldest first):
+        [
+            {"action": ..., "ref": ..., "actor": ..., "timestamp": ...},
+            ...
+        ]
+
+    Raises BlockchainConnectionError on RPC failure, BlockchainError on other
+    contract read errors, or BlockchainRecordNotFoundError if the contract
+    reports zero events for this s_code.
+    """
+    try:
+        w3, acct, contract = load_contract()
+        if contract is None:
+            raise BlockchainError("Contract not loaded — ABI or address file missing")
+
+        count = contract.functions.getEventCount(s_code).call()
+        if count == 0:
+            raise BlockchainRecordNotFoundError(
+                f"No blockchain lifecycle events found for s_code={s_code}"
+            )
+
+        events: list[dict] = []
+        for idx in range(int(count)):
+            s_code_, action, ref, actor, ts = contract.functions.events(idx).call()
+            # Skip events belonging to a different s_code (shouldn't happen but
+            # guard against malformed chain state).
+            if s_code_ != s_code:
+                continue
+            events.append({
+                "action": action,
+                "ref": ref,
+                "actor": actor,
+                "timestamp": int(ts) if ts else None,
+            })
+        return events
+    except (BlockchainConnectionError, BlockchainRecordNotFoundError):
+        raise
+    except Exception as exc:
+        raise BlockchainError(
+            f"Blockchain get_lifecycle_events failed for s_code={s_code}: {exc}"
+        ) from exc
+
+
+def record_event(s_code: str, action: str, ref: str) -> str:
+    """
+    Record a lifecycle event on-chain for the given s_code.
+
+    Returns the transaction hash on success.
+    Raises ValueError if action is not an allowed lifecycle step (checked
+    before any transaction is built, so no gas is spent on invalid input).
+    Raises BlockchainError (or subclasses) on failure.
+    """
+    if action not in _ALLOWED_LIFECYCLE_ACTIONS:
+        raise ValueError(
+            f"Invalid lifecycle action '{action}'. Allowed: {sorted(_ALLOWED_LIFECYCLE_ACTIONS)}"
+        )
+    try:
+        w3, acct, contract = load_contract()
+        if contract is None:
+            raise BlockchainError("Contract not loaded — ABI or address file missing")
+        nonce = w3.eth.get_transaction_count(acct.address)
+        tx = contract.functions.recordEvent(s_code, action, ref).build_transaction({
+            "from": acct.address,
+            "nonce": nonce,
+            "gas": 1_500_000,
+            "gasPrice": w3.to_wei("1", "gwei"),
+        })
+        signed = w3.eth.account.sign_transaction(tx, private_key=settings.PRIVATE_KEY)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        return receipt.transactionHash.hex()
+    except ValueError:
+        raise
+    except BlockchainError:
+        raise
+    except Exception as exc:
+        raise BlockchainConnectionError(
+            f"Blockchain record_event failed for s_code={s_code} action={action}: {exc}"
         ) from exc
