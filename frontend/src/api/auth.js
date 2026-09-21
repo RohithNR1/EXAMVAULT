@@ -6,12 +6,16 @@ export const login = (username, password) =>
 export const register = (payload) =>
   client.post("register/", payload);
 
-export const getSubjectCodes = () =>
-  client.get("subject-codes/");
-
 // Teacher
+export const getTeacherPending = () => client.get("teacher/requests/pending/");
+
+export const getTeacherAccepted = () => client.get("teacher/requests/accepted/");
+
 export const acceptRequest = (id) =>
   client.post(`teacher/requests/${id}/accept/`);
+
+export const rejectRequest = (id) =>
+  client.post(`teacher/requests/${id}/reject/`);
 
 export const uploadPaper = (id, file) => {
   const form = new FormData();
@@ -20,9 +24,6 @@ export const uploadPaper = (id, file) => {
     headers: { "Content-Type": "multipart/form-data" },
   });
 };
-
-export const getTeacherFinalPapers = () =>
-  client.get("teacher/final-papers/");
 
 // COE - endpoints used in COE.jsx
 export const coeGetTeachers = (payload) =>
@@ -51,9 +52,6 @@ export const scrutinyGetResults = () =>
 
 export const scrutinyGetSummary = () =>
   client.get("scrutiny/summary/");
-
-export const scrutinyGetDetail = (requestId) =>
-  client.get(`scrutiny/detail/${requestId}/`);
 
 export const scrutinySyncVTU = (payload) =>
   client.post("scrutiny/vtu-sync/", payload);
