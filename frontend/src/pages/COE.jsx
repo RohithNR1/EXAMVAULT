@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import NavBar from "../components/NavBar";
+import Layout from "../components/Layout";
 import ScrutinyDashboard from "../components/ScrutinyDashboard";
 import {
   coeGetTeachers,
@@ -8,10 +8,16 @@ import {
   coeGetCandidates,
   coeFinalize,
 } from "../api/auth";
+import {
+  Button,
+  Card,
+  Badge,
+  Modal,
+  EmptyState,
+  ErrorState,
+} from "../components/ui";
 
 export default function COE() {
-  const role = localStorage.getItem("role");
-
   const [course, setCourse] = useState("None");
   const [semester, setSemester] = useState("None");
   const [branch, setBranch] = useState("None");
@@ -34,14 +40,17 @@ export default function COE() {
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
 
   const [requests, setRequests] = useState([]);
-  const [activeTab, setActiveTab] = useState("requests"); // New state for tab management
+  const [activeTab, setActiveTab] = useState("requests");
+  const [error, setError] = useState(null);
 
   const loadRequests = async () => {
     try {
+      setError(null);
       const { data } = await coeListRequests();
       setRequests(data || []);
     } catch (err) {
       console.error(err);
+      setError("Failed to load requests");
       setRequests([]);
     }
   };
@@ -139,225 +148,367 @@ export default function COE() {
     }
   };
 
-  const onLogout = () => {
-    localStorage.clear();
-    window.location.href = "/login";
-  };
-
   const grouped = {};
   requests.forEach((r) => {
     if (!grouped[r.s_code]) grouped[r.s_code] = [];
     grouped[r.s_code].push(r);
   });
 
-  return (
-    <div>
-      <NavBar role={role} onLogout={onLogout} />
+  const tabItems = [
+    { key: "requests", label: "Request Management" },
+    { key: "scrutiny", label: "Scrutiny Dashboard" },
+  ];
 
+  return (
+    <Layout>
       {/* Tab Navigation */}
-      <div className="border-b border-gray-200">
-        <nav className="flex space-x-8 px-6 pt-6">
-          <button
-            onClick={() => setActiveTab("requests")}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === "requests"
-                ? "border-blue-500 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-            }`}
-          >
-            Request Management
-          </button>
-          <button
-            onClick={() => setActiveTab("scrutiny")}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === "scrutiny"
-                ? "border-blue-500 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-            }`}
-          >
-            Scrutiny Dashboard
-          </button>
+      <div className="border-b border-neutral-200 mb-6">
+        <nav className="flex gap-1" aria-label="COE sections" role="tablist">
+          {tabItems.map((tab) => (
+            <button
+              key={tab.key}
+              id={`tab-${tab.key}`}
+              onClick={() => setActiveTab(tab.key)}
+              className={`py-2.5 px-4 border-b-2 font-medium text-sm transition-colors ${
+                activeTab === tab.key
+                  ? "border-primary-600 text-primary-700"
+                  : "border-transparent text-neutral-500 hover:text-neutral-700 hover:border-neutral-300"
+              }`}
+              role="tab"
+              aria-selected={activeTab === tab.key}
+            >
+              {tab.label}
+            </button>
+          ))}
         </nav>
       </div>
 
       {/* Tab Content */}
       {activeTab === "requests" && (
-        <div className="p-6 grid gap-8 md:grid-cols-2">
-          {/* Left Panel */}
-          <div className="border p-6 rounded shadow-sm">
-            <h2 className="text-2xl font-semibold text-center mb-4">Send Request</h2>
+        <div className="grid gap-6 md:grid-cols-2" role="tabpanel" id="tabpanel-requests" aria-labelledby="tab-requests">
+          {/* Left Panel — Send Request */}
+          <Card>
+            <Card.Header>
+              <h2 className="text-lg font-semibold text-neutral-800">Send Request</h2>
+            </Card.Header>
+            <Card.Body>
+              <div className="space-y-3">
+                <label className="block">
+                  <span className="text-sm text-neutral-600">Course</span>
+                  <select
+                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 text-sm"
+                    value={course}
+                    onChange={(e) => setCourse(e.target.value)}
+                  >
+                    <option>None</option>
+                    <option>B.E.</option>
+                    <option>M.E.</option>
+                  </select>
+                </label>
 
-            <div className="grid grid-cols-1 gap-3">
-              <label className="text-sm">Course</label>
-              <select className="border p-2" value={course} onChange={(e) => setCourse(e.target.value)}>
-                <option>None</option><option>B.E.</option><option>M.E.</option>
-              </select>
+                <label className="block">
+                  <span className="text-sm text-neutral-600">Semester</span>
+                  <select
+                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 text-sm"
+                    value={semester}
+                    onChange={(e) => setSemester(e.target.value)}
+                  >
+                    <option>None</option>
+                    <option>I</option>
+                    <option>II</option>
+                    <option>III</option>
+                    <option>IV</option>
+                    <option>V</option>
+                    <option>VI</option>
+                    <option>VII</option>
+                    <option>VIII</option>
+                  </select>
+                </label>
 
-              <label className="text-sm">Semester</label>
-              <select className="border p-2" value={semester} onChange={(e) => setSemester(e.target.value)}>
-                <option>None</option><option>I</option><option>II</option><option>III</option><option>IV</option>
-                <option>V</option><option>VI</option><option>VII</option><option>VIII</option>
-              </select>
+                <label className="block">
+                  <span className="text-sm text-neutral-600">Branch</span>
+                  <select
+                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 text-sm"
+                    value={branch}
+                    onChange={(e) => setBranch(e.target.value)}
+                  >
+                    <option>None</option>
+                    <option>CSE</option>
+                    <option>IT</option>
+                    <option>ECE</option>
+                    <option>EEE</option>
+                    <option>MECH</option>
+                    <option>BioTech</option>
+                  </select>
+                </label>
 
-              <label className="text-sm">Branch</label>
-              <select className="border p-2" value={branch} onChange={(e) => setBranch(e.target.value)}>
-                <option>None</option><option>CSE</option><option>IT</option><option>ECE</option><option>EEE</option>
-                <option>MECH</option><option>BioTech</option>
-              </select>
+                <label className="block">
+                  <span className="text-sm text-neutral-600">Subject</span>
+                  <select
+                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 text-sm"
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}
+                  >
+                    <option>None</option>
+                    <option>Internet of Things</option>
+                    <option>Parallel Computing</option>
+                    <option>Cryptography</option>
+                    <option>Big Data Analytics</option>
+                    <option>MACHINE LEARNING</option>
+                    <option>CLOUD COMPUTING</option>
+                  </select>
+                </label>
 
-              <label className="text-sm">Subject</label>
-              <select className="border p-2" value={subject} onChange={(e) => setSubject(e.target.value)}>
-                <option>None</option><option>Internet of Things</option><option>Parallel Computing</option>
-                <option>Cryptography</option><option>Big Data Analytics</option><option>MACHINE LEARNING</option><option>CLOUD COMPUTING  </option>
-              </select>
-
-              <div className="mt-2 flex gap-3">
-                <button className="bg-blue-600 text-white px-4 py-2 rounded" onClick={handleSubmitSearch}>Submit</button>
-                <button
-                  className={`px-4 py-2 rounded ${uploadedRequestIds.length>0 ? "bg-indigo-600 text-white":"bg-gray-300 text-gray-600 cursor-not-allowed"}`}
-                  onClick={() => uploadedRequestIds.length>0 && handleOpenFinalize()}
-                >Finalize</button>
-                <button className="px-4 py-2 bg-gray-700 text-white rounded" onClick={loadRequests}>Refresh</button>
-              </div>
-
-              {scode && <div className="text-sm mt-2">Subject Code: <b>{scode}</b></div>}
-
-              <div className="mt-3">
-                <label className="text-sm">Available Teachers</label>
-                {teachers.length === 0 && <div className="text-sm text-gray-500 mt-2">No teachers available</div>}
-                <div className="space-y-2 mt-2">
-                  {teachers.map((t) => (
-                    <div key={t.id} className="flex items-center justify-between border p-3 rounded">
-                      <div>{t.first_name} {t.last_name} ({t.username})</div>
-                      <div>
-                        <button className="px-3 py-1 bg-green-600 text-white rounded" onClick={() => openSendRequestModal(t)}>Send Request</button>
-                      </div>
-                    </div>
-                  ))}
+                <div className="flex gap-2 pt-1">
+                  <Button variant="primary" size="sm" onClick={handleSubmitSearch}>
+                    Submit
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={uploadedRequestIds.length === 0}
+                    onClick={() => uploadedRequestIds.length > 0 && handleOpenFinalize()}
+                  >
+                    Finalize
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={loadRequests}>
+                    Refresh
+                  </Button>
                 </div>
-              </div>
-            </div>
-          </div>
 
-          {/* Right Panel */}
-          <div className="p-4">
-            <h2 className="text-2xl font-semibold text-center mb-4">Request Status</h2>
-            <div className="space-y-3">
-              {Object.keys(grouped).length===0 && <div className="text-sm text-gray-500">No requests yet</div>}
-              {Object.keys(grouped).map((s_code) => (
-                <div key={s_code} className="border p-4 rounded">
-                  <div className="text-lg font-medium">{s_code}</div>
-                  <div className="mt-2 space-y-2">
-                    {grouped[s_code].map((r) => (
-                      <div key={r.id} className="flex justify-between items-center border p-2 rounded">
-                        <div>{r.teacher_first_name} {r.teacher_last_name} ({r.tusername})</div>
-                        <div className="text-sm"><span className="px-3 py-1 rounded bg-gray-100">{r.status}</span></div>
+                {scode && (
+                  <div className="text-sm text-neutral-600">
+                    Subject Code: <span className="font-semibold text-neutral-800">{scode}</span>
+                  </div>
+                )}
+
+                <div className="pt-2">
+                  <span className="text-sm font-medium text-neutral-700">Available Teachers</span>
+                  {teachers.length === 0 && (
+                    <p className="text-sm text-neutral-500 mt-1">No teachers available</p>
+                  )}
+                  <div className="space-y-2 mt-2">
+                    {teachers.map((t) => (
+                      <div
+                        key={t.id}
+                        className="flex items-center justify-between rounded-lg border border-neutral-200 px-3 py-2.5 bg-surface"
+                      >
+                        <div className="text-sm text-neutral-700">
+                          {t.first_name} {t.last_name}{" "}
+                          <span className="text-neutral-500">({t.username})</span>
+                        </div>
+                        <Button
+                          variant="success"
+                          size="sm"
+                          onClick={() => openSendRequestModal(t)}
+                        >
+                          Send Request
+                        </Button>
                       </div>
                     ))}
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
+              </div>
+            </Card.Body>
+          </Card>
+
+          {/* Right Panel — Request Status */}
+          <Card>
+            <Card.Header>
+              <h2 className="text-lg font-semibold text-neutral-800">Request Status</h2>
+            </Card.Header>
+            <Card.Body>
+              {error ? (
+                <ErrorState
+                  title="Failed to load requests"
+                  description={error}
+                  retry="Retry request list"
+                  onRetry={loadRequests}
+                />
+              ) : Object.keys(grouped).length === 0 ? (
+                <EmptyState
+                  title="No requests yet"
+                  description="Submit a subject to begin the request workflow."
+                />
+              ) : (
+                <div className="space-y-3 max-h-[520px] overflow-auto pr-1">
+                  {Object.keys(grouped).map((s_code) => (
+                    <div key={s_code} className="rounded-lg border border-neutral-200 bg-surface p-3">
+                      <div className="text-sm font-semibold text-neutral-800">{s_code}</div>
+                      <div className="mt-2 space-y-1.5">
+                        {grouped[s_code].map((r) => (
+                          <div
+                            key={r.id}
+                            className="flex justify-between items-center rounded-md bg-white px-3 py-2 border border-neutral-100"
+                          >
+                            <div className="text-sm text-neutral-700 truncate max-w-[60%]">
+                              {r.teacher_first_name} {r.teacher_last_name} ({r.tusername})
+                            </div>
+                            <Badge variant="neutral">{r.status}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card.Body>
+          </Card>
         </div>
       )}
 
       {activeTab === "scrutiny" && (
-        <div className="p-6">
+        <div role="tabpanel" id="tabpanel-scrutiny" aria-labelledby="tab-scrutiny">
           <ScrutinyDashboard />
         </div>
       )}
 
-      {/* Send Request Modal */}
-      {isSendModalOpen && targetTeacher && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-          <div className="bg-white w-[700px] max-w-[95%] rounded-lg shadow-lg p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-semibold">Send Request to {targetTeacher.first_name} {targetTeacher.last_name}</h3>
-              <button className="text-gray-600" onClick={()=>setSendModalOpen(false)}>✕</button>
-            </div>
-
-            <div className="space-y-3">
-              <div>Subject Code: <b>{scode}</b></div>
-
-              <div>
-                <label className="text-sm">Syllabus:</label>
-                {defaultSyllabusUrl 
-                  ? <a href={defaultSyllabusUrl} target="_blank" className="text-blue-600 underline block mt-1">Open Syllabus PDF</a>
-                  : <div className="text-sm text-gray-500">No syllabus available</div>
-                }
-              </div>
-
-              <div>
-                <label className="text-sm">Question Pattern:</label>
-                {defaultQPatternUrl
-                  ? <a href={defaultQPatternUrl} target="_blank" className="text-blue-600 underline block mt-1">Open Question Pattern PDF</a>
-                  : <div className="text-sm text-gray-500">No question pattern available</div>
-                }
-              </div>
-
-              <div>
-                <label className="text-sm">Deadline:</label>
-                <input type="date" className="border p-2" value={reqDeadline} onChange={(e)=>setReqDeadline(e.target.value)} />
-              </div>
-
-              <div>
-                <label className="text-sm">Total Marks:</label>
-                <input type="number" className="border p-2" value={reqTotalMarks} onChange={(e)=>setReqTotalMarks(e.target.value)} />
-              </div>
-            </div>
-
-            <div className="mt-4 flex justify-end gap-3">
-              <button className="px-4 py-2 border rounded" onClick={()=>setSendModalOpen(false)}>Cancel</button>
-              <button className="px-4 py-2 bg-blue-600 text-white rounded" onClick={handleConfirmRequest}>Confirm Request</button>
-            </div>
+      {/* Send Request Modal — shared Modal primitive */}
+      <Modal
+        open={isSendModalOpen}
+        onClose={() => setSendModalOpen(false)}
+        title={`Send Request to ${targetTeacher?.first_name ?? ""} ${targetTeacher?.last_name ?? ""}`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setSendModalOpen(false)}>Cancel</Button>
+            <Button variant="primary" onClick={handleConfirmRequest}>Confirm Request</Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-neutral-600">
+            Subject Code: <span className="font-semibold text-neutral-800">{scode}</span>
           </div>
+
+          <div>
+            <span className="text-sm font-medium text-neutral-700">Syllabus:</span>
+            {defaultSyllabusUrl ? (
+              <a
+                href={defaultSyllabusUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block mt-1 text-sm text-primary-600 hover:underline"
+              >
+                Open Syllabus PDF
+              </a>
+            ) : (
+              <p className="text-sm text-neutral-500 mt-1">No syllabus available</p>
+            )}
+          </div>
+
+          <div>
+            <span className="text-sm font-medium text-neutral-700">Question Pattern:</span>
+            {defaultQPatternUrl ? (
+              <a
+                href={defaultQPatternUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block mt-1 text-sm text-primary-600 hover:underline"
+              >
+                Open Question Pattern PDF
+              </a>
+            ) : (
+              <p className="text-sm text-neutral-500 mt-1">No question pattern available</p>
+            )}
+          </div>
+
+          <label className="block">
+            <span className="text-sm font-medium text-neutral-700">Deadline:</span>
+            <input
+              type="date"
+              className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm"
+              value={reqDeadline}
+              onChange={(e) => setReqDeadline(e.target.value)}
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-neutral-700">Total Marks:</span>
+            <input
+              type="number"
+              className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm"
+              value={reqTotalMarks}
+              onChange={(e) => setReqTotalMarks(Number(e.target.value))}
+            />
+          </label>
         </div>
-      )}
+      </Modal>
 
-      {/* Finalize Modal */}
-      {isFinalizeModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-          <div className="bg-white w-[700px] max-w-[95%] rounded-lg shadow-lg p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-semibold">Select one paper to finalize</h3>
-              <button className="text-gray-600" onClick={()=>setFinalizeModalOpen(false)}>✕</button>
-            </div>
-
-            <div className="max-h-[300px] overflow-auto space-y-3">
-              {candidatePapers.length===0 && <div className="text-sm text-gray-500">No uploaded papers</div>}
-              {candidatePapers.map((mp) => (
-                <div key={mp.id} className="flex items-start gap-3 border p-3 rounded">
-                  <input type="radio" name="candidate" value={mp.id} checked={selectedCandidateId===mp.id} onChange={()=>setSelectedCandidateId(mp.id)} className="mt-1" />
-                  <div className="flex-1 space-y-1 text-sm">
-                    <div className="font-medium text-base">{mp.paper_number}</div>
-                    {mp.scrutiny ? (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="px-2 py-1 rounded bg-gray-100 text-gray-700">
-                          Score: <b>{mp.scrutiny.score_percent}%</b> ({mp.scrutiny.quality})
-                        </span>
-                        <span className={`px-2 py-1 rounded ${mp.scrutiny.plagiarism_percent > 30 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
-                          Plagiarism: {mp.scrutiny.plagiarism_percent}%
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          Scrutinized on {mp.scrutiny.created_at ? new Date(mp.scrutiny.created_at).toLocaleString() : "N/A"}
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="text-gray-500 italic">Scrutiny results not available yet.</div>
-                    )}
-                  </div>
+      {/* Finalize Modal — shared Modal primitive */}
+      <Modal
+        open={isFinalizeModalOpen}
+        onClose={() => setFinalizeModalOpen(false)}
+        title="Select one paper to finalize"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setFinalizeModalOpen(false)}>Cancel</Button>
+            <Button
+              variant="success"
+              disabled={!selectedCandidateId}
+              onClick={handleFinalizePaper}
+            >
+              Finalize Paper
+            </Button>
+          </>
+        }
+      >
+        <div className="max-h-[360px] overflow-auto space-y-2 pr-1">
+          {candidatePapers.length === 0 ? (
+            <p className="text-sm text-neutral-500">No uploaded papers</p>
+          ) : (
+            candidatePapers.map((mp) => (
+              <div
+                key={mp.id}
+                className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
+                  selectedCandidateId === mp.id
+                    ? "border-primary-500 bg-primary-50"
+                    : "border-neutral-200 bg-surface hover:bg-neutral-50"
+                }`}
+                onClick={() => setSelectedCandidateId(mp.id)}
+                role="radio"
+                aria-checked={selectedCandidateId === mp.id}
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedCandidateId(mp.id); }}
+              >
+                <input
+                  type="radio"
+                  name="candidate"
+                  value={mp.id}
+                  checked={selectedCandidateId === mp.id}
+                  onChange={() => setSelectedCandidateId(mp.id)}
+                  className="mt-1 accent-primary-600"
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <div className="flex-1 space-y-1 text-sm">
+                  <div className="font-semibold text-neutral-800">{mp.paper_number}</div>
+                  {mp.scrutiny ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="info">
+                        Score: <b>{mp.scrutiny.score_percent}%</b> ({mp.scrutiny.quality})
+                      </Badge>
+                      <Badge
+                        variant={mp.scrutiny.plagiarism_percent > 30 ? "danger" : "success"}
+                      >
+                        Plagiarism: {mp.scrutiny.plagiarism_percent}%
+                      </Badge>
+                      <span className="text-xs text-neutral-500">
+                        Scrutinized on{" "}
+                        {mp.scrutiny.created_at
+                          ? new Date(mp.scrutiny.created_at).toLocaleString()
+                          : "N/A"}
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="text-neutral-500 italic text-xs">
+                      Scrutiny results not available yet.
+                    </p>
+                  )}
                 </div>
-              ))}
-            </div>
-
-            <div className="mt-4 flex justify-end gap-3">
-              <button className="px-4 py-2 border rounded" onClick={()=>setFinalizeModalOpen(false)}>Cancel</button>
-              <button className="px-4 py-2 bg-green-600 text-white rounded" onClick={handleFinalizePaper}>Finalize Paper</button>
-            </div>
-          </div>
+              </div>
+            ))
+          )}
         </div>
-      )}
-    </div>
+      </Modal>
+    </Layout>
   );
 }

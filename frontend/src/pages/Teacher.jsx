@@ -1,26 +1,41 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import Layout from "../components/Layout";
 import {
   getTeacherPending,
   getTeacherAccepted,
   acceptRequest,
   rejectRequest,
   uploadPaper,
-} from "../api/teacher_api";
+} from "../api/auth";
+import {
+  Button,
+  Card,
+  Badge,
+  EmptyState,
+  ErrorState,
+  CardSkeleton,
+} from "../components/ui";
 
-const Teacher = () => {
+export default function Teacher() {
   const [pendingRequests, setPendingRequests] = useState([]);
   const [acceptedRequests, setAcceptedRequests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [uploadingId, setUploadingId] = useState(null);
 
   const fetchRequests = async () => {
     setLoading(true);
+    setError(null);
     try {
-      const pending = await getTeacherPending();
-      const accepted = await getTeacherAccepted();
-      setPendingRequests(pending);
-      setAcceptedRequests(accepted);
+      const [pending, accepted] = await Promise.all([
+        getTeacherPending(),
+        getTeacherAccepted(),
+      ]);
+      setPendingRequests(pending || []);
+      setAcceptedRequests(accepted || []);
     } catch (err) {
       console.error("Error fetching teacher requests:", err);
+      setError("Failed to load your requests. Please refresh the page.");
     } finally {
       setLoading(false);
     }
@@ -55,6 +70,7 @@ const Teacher = () => {
       alert("Choose file to upload");
       return;
     }
+    setUploadingId(id);
     try {
       await uploadPaper(id, file);
       alert("Uploaded");
@@ -62,142 +78,186 @@ const Teacher = () => {
     } catch (e) {
       console.error(e);
       alert("Upload failed");
+    } finally {
+      setUploadingId(null);
     }
   };
 
-  const handleLogout = () => {
-    // You can clear tokens/localStorage here
-    localStorage.removeItem("token");
-    window.location.href = "/login"; // redirect to login
-  };
-
   const RequestCard = ({ req, type }) => (
-    <div className="bg-white shadow rounded-xl p-5 border border-gray-200 mb-4">
-      <h4 className="text-lg font-semibold text-gray-700 mb-2">
-        {req.subject} ({req.subject_code || req.s_code})
-      </h4>
-      <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
-        <p><span className="font-medium">Course:</span> {req.course}</p>
-        <p><span className="font-medium">Semester:</span> {req.semester}</p>
-        <p><span className="font-medium">Branch:</span> {req.branch}</p>
-        <p><span className="font-medium">Total Marks:</span> {req.total_marks}</p>
-        <p><span className="font-medium">Deadline:</span> {req.deadline}</p>
-        <p><span className="font-medium">Status:</span> {req.status}</p>
-      </div>
-
-      <div className="mt-3 text-sm">
-        <p>
-          <span className="font-medium">Syllabus: </span>
-          {req.syllabus_url ? (
-            <a
-              href={req.syllabus_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
-            >
-              📄 View
-            </a>
-          ) : (
-            "Not uploaded"
-          )}
-        </p>
-        <p>
-          <span className="font-medium">Question Pattern: </span>
-          {req.q_pattern_url ? (
-            <a
-              href={req.q_pattern_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
-            >
-              📄 View
-            </a>
-          ) : (
-            "Not uploaded"
-          )}
-        </p>
-      </div>
-
-      {type === "pending" && req.status === "Pending" && (
-        <div className="mt-4 flex gap-3">
-          <button
-            onClick={() => handleAccept(req.id)}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
-          >
-            Accept
-          </button>
-          <button
-            onClick={() => handleReject(req.id)}
-            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
-          >
-            Reject
-          </button>
+    <Card className="mb-4">
+      <Card.Header>
+        <div className="flex items-start justify-between gap-3">
+          <h4 className="text-base font-semibold text-neutral-800">
+            {req.subject}{" "}
+            <span className="text-sm font-normal text-neutral-500">
+              ({req.subject_code || req.s_code})
+            </span>
+          </h4>
+          <Badge variant={type === "pending" ? "warning" : "success"}>
+            {req.status || type}
+          </Badge>
         </div>
-      )}
-
-      {type === "accepted" && req.status === "Accepted" && (
-        <div className="mt-4">
-          <input
-            type="file"
-            className="block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4
-                       file:rounded-lg file:border-0 file:text-sm file:font-semibold
-                       file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-            onChange={(e) => handleUpload(req.id, e.target.files[0])}
-          />
+      </Card.Header>
+      <Card.Body>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+          <div>
+            <span className="text-neutral-500">Course:</span>{" "}
+            <span className="font-medium text-neutral-700">{req.course}</span>
+          </div>
+          <div>
+            <span className="text-neutral-500">Semester:</span>{" "}
+            <span className="font-medium text-neutral-700">{req.semester}</span>
+          </div>
+          <div>
+            <span className="text-neutral-500">Branch:</span>{" "}
+            <span className="font-medium text-neutral-700">{req.branch}</span>
+          </div>
+          <div>
+            <span className="text-neutral-500">Total Marks:</span>{" "}
+            <span className="font-medium text-neutral-700">
+              {req.total_marks}
+            </span>
+          </div>
+          <div>
+            <span className="text-neutral-500">Deadline:</span>{" "}
+            <span className="font-medium text-neutral-700">
+              {req.deadline || "—"}
+            </span>
+          </div>
         </div>
-      )}
-    </div>
+
+        <div className="mt-4 space-y-1 text-sm">
+          <p>
+            <span className="font-medium text-neutral-600">Syllabus: </span>
+            {req.syllabus_url ? (
+              <a
+                href={req.syllabus_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary-600 hover:text-primary-700 hover:underline"
+              >
+                View
+              </a>
+            ) : (
+              <span className="text-neutral-400">Not uploaded</span>
+            )}
+          </p>
+          <p>
+            <span className="font-medium text-neutral-600">
+              Question Pattern:{" "}
+            </span>
+            {req.q_pattern_url ? (
+              <a
+                href={req.q_pattern_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary-600 hover:text-primary-700 hover:underline"
+              >
+                View
+              </a>
+            ) : (
+              <span className="text-neutral-400">Not uploaded</span>
+            )}
+          </p>
+        </div>
+      </Card.Body>
+      <Card.Footer>
+        {type === "pending" && req.status === "Pending" && (
+          <div className="flex gap-2">
+            <Button
+              variant="success"
+              size="sm"
+              onClick={() => handleAccept(req.id)}
+            >
+              Accept
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => handleReject(req.id)}
+            >
+              Reject
+            </Button>
+          </div>
+        )}
+        {type === "accepted" && req.status === "Accepted" && (
+          <div className="flex items-center gap-3">
+            <input
+              type="file"
+              className="block w-full text-sm text-neutral-600 file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100"
+              onChange={(e) => handleUpload(req.id, e.target.files[0])}
+            />
+            {uploadingId === req.id && (
+              <span className="text-xs text-neutral-500">Uploading…</span>
+            )}
+          </div>
+        )}
+      </Card.Footer>
+    </Card>
   );
 
   return (
-    <div className="bg-gray-50 min-h-screen">
-      {/* Top Navbar */}
-      <nav className="bg-white shadow p-4 flex justify-between items-center">
-        <h2 className="text-xl font-bold text-gray-800">EXAM-VAULT</h2>
-        <div className="flex items-center gap-4">
-          <span className="text-gray-600">Role: <span className="font-medium">Teacher</span></span>
-          <button
-            onClick={handleLogout}
-            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
-          >
-            Logout
-          </button>
-        </div>
-      </nav>
-
-      <div className="p-6">
-        {loading ? (
-          <p className="text-gray-500">Loading...</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Pending Requests */}
-            <div>
-              <h3 className="text-xl font-semibold text-gray-700 mb-3">📌 Pending Requests</h3>
-              {pendingRequests.length === 0 ? (
-                <p className="text-gray-500">No pending requests.</p>
-              ) : (
-                pendingRequests.map((req) => (
-                  <RequestCard key={req.id} req={req} type="pending" />
-                ))
-              )}
+    <Layout>
+      <div className="max-w-5xl mx-auto space-y-8">
+        {/* Pending Requests */}
+        <section>
+          <h2 className="text-lg font-semibold text-neutral-800 mb-4 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-warning-500" />
+            Pending Requests
+          </h2>
+          {loading ? (
+            <CardSkeleton lines={3} />
+          ) : error ? (
+            <ErrorState
+              title="Failed to load requests"
+              description={error}
+              retry="Retry pending requests"
+              onRetry={fetchRequests}
+            />
+          ) : pendingRequests.length === 0 ? (
+            <Card>
+              <Card.Body>
+                <EmptyState
+                  title="No pending requests"
+                  description="New exam-paper requests will appear here."
+                />
+              </Card.Body>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {pendingRequests.map((req) => (
+                <RequestCard key={req.id} req={req} type="pending" />
+              ))}
             </div>
+          )}
+        </section>
 
-            {/* Accepted Requests */}
-            <div>
-              <h3 className="text-xl font-semibold text-gray-700 mb-3">✅ Accepted / Uploaded</h3>
-              {acceptedRequests.length === 0 ? (
-                <p className="text-gray-500">No accepted requests.</p>
-              ) : (
-                acceptedRequests.map((req) => (
-                  <RequestCard key={req.id} req={req} type="accepted" />
-                ))
-              )}
+        {/* Accepted Requests */}
+        <section>
+          <h2 className="text-lg font-semibold text-neutral-800 mb-4 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-success-500" />
+            Accepted / Uploaded
+          </h2>
+          {loading ? (
+            <CardSkeleton lines={3} />
+          ) : acceptedRequests.length === 0 ? (
+            <Card>
+              <Card.Body>
+                <EmptyState
+                  title="No accepted requests"
+                  description="Accepted requests will appear here."
+                />
+              </Card.Body>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {acceptedRequests.map((req) => (
+                <RequestCard key={req.id} req={req} type="accepted" />
+              ))}
             </div>
-          </div>
-        )}
+          )}
+        </section>
       </div>
-    </div>
+    </Layout>
   );
-};
-
-export default Teacher;
+}

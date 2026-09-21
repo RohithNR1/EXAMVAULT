@@ -1,23 +1,31 @@
 import { useState, useEffect } from "react";
-import NavBar from "../components/NavBar";
+import Layout from "../components/Layout";
 import { getStudentMe, getStudentFinalPapers, downloadPaper, verifyPaper } from "../api/auth";
+import {
+  Button,
+  Card,
+  Badge,
+  EmptyState,
+  ErrorState,
+  CardSkeleton,
+} from "../components/ui";
 
 export default function Student() {
-  const [profile, setProfile] = useState(null);
   const [papers, setPapers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [downloadingId, setDownloadingId] = useState(null);
   const [verifyingId, setVerifyingId] = useState(null);
   const [verificationResults, setVerificationResults] = useState({});
+  const [fetchError, setFetchError] = useState(null);
 
   useEffect(() => {
     (async () => {
       try {
+        setFetchError(null);
         const [{ data: user }, { data: list }] = await Promise.all([
           getStudentMe(),
           getStudentFinalPapers(),
         ]);
-        setProfile(user);
         setPapers(list || []);
         // Sync student profile fields into localStorage for access-window filtering
         if (user?.role === "student") {
@@ -28,6 +36,7 @@ export default function Student() {
         }
       } catch (err) {
         console.error("Failed to load student data:", err);
+        setFetchError("Failed to load your exam results. Please refresh the page.");
       } finally {
         setLoading(false);
       }
@@ -69,47 +78,57 @@ export default function Student() {
     }
   };
 
-  const onLogout = () => {
-    localStorage.clear();
-    window.location.href = "/login";
-  };
-
   return (
-    <>
-      <NavBar role={profile?.role} onLogout={onLogout} />
-      <div className="min-h-screen bg-gray-50 p-8">
-        <div className="max-w-6xl mx-auto">
-          <h1 className="text-3xl font-bold text-gray-800 mb-6">My Exam Results</h1>
+    <Layout>
+      <div className="max-w-5xl mx-auto">
+        <h1 className="text-2xl font-bold text-neutral-800 mb-6">My Exam Results</h1>
 
-          {loading ? (
-            <div className="text-center text-gray-600">Loading...</div>
-          ) : papers.length === 0 ? (
-            <div className="bg-white rounded-lg shadow p-6 text-center">
-              <p className="text-gray-600">No exam results available yet.</p>
-            </div>
-          ) : (
-            <div className="bg-white rounded-lg shadow overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-purple-600 text-white">
+        {loading ? (
+          <div className="space-y-4">
+            <CardSkeleton lines={4} />
+            <CardSkeleton lines={4} />
+          </div>
+        ) : fetchError ? (
+          <ErrorState
+            title="Failed to load results"
+            description={fetchError}
+            retry="Retry loading results"
+            onRetry={() => window.location.reload()}
+          />
+        ) : papers.length === 0 ? (
+          <Card>
+            <Card.Body>
+              <EmptyState
+                title="No exam results available yet"
+                description="Results will appear here once your exams are finalized."
+              />
+            </Card.Body>
+          </Card>
+        ) : (
+          <Card className="overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-primary-600 text-white">
                   <tr>
-                    <th className="px-6 py-3 text-left">Subject</th>
-                    <th className="px-6 py-3 text-left">Subject Code</th>
-                    <th className="px-6 py-3 text-left">Course</th>
-                    <th className="px-6 py-3 text-left">Semester</th>
-                    <th className="px-6 py-3 text-left">Branch</th>
-                    <th className="px-6 py-3 text-left">Access Window</th>
-                    <th className="px-6 py-3 text-left">Paper</th>
+                    <th className="px-5 py-3 text-left font-medium" scope="col">Subject</th>
+                    <th className="px-5 py-3 text-left font-medium" scope="col">Subject Code</th>
+                    <th className="px-5 py-3 text-left font-medium" scope="col">Course</th>
+                    <th className="px-5 py-3 text-left font-medium" scope="col">Semester</th>
+                    <th className="px-5 py-3 text-left font-medium" scope="col">Branch</th>
+                    <th className="px-5 py-3 text-left font-medium" scope="col">Access Window</th>
+                    <th className="px-5 py-3 text-left font-medium" scope="col">Paper</th>
+                    <th className="px-5 py-3 text-left font-medium" scope="col">Blockchain</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="bg-surface">
                   {papers.map((paper) => (
-                    <tr key={paper.id} className="border-b hover:bg-gray-50">
-                      <td className="px-6 py-3">{paper.subject}</td>
-                      <td className="px-6 py-3">{paper.s_code}</td>
-                      <td className="px-6 py-3">{paper.course}</td>
-                      <td className="px-6 py-3">{paper.semester}</td>
-                      <td className="px-6 py-3">{paper.branch}</td>
-                      <td className="px-6 py-3 text-sm text-gray-500">
+                    <tr key={paper.id} className="border-b border-neutral-100 hover:bg-neutral-50 transition-colors">
+                      <td className="px-5 py-3 font-medium text-neutral-800">{paper.subject}</td>
+                      <td className="px-5 py-3 font-mono text-neutral-600">{paper.s_code}</td>
+                      <td className="px-5 py-3 text-neutral-700">{paper.course}</td>
+                      <td className="px-5 py-3 text-neutral-700">{paper.semester}</td>
+                      <td className="px-5 py-3 text-neutral-700">{paper.branch}</td>
+                      <td className="px-5 py-3 text-xs text-neutral-500">
                         {paper.access_start
                           ? new Date(paper.access_start).toLocaleString()
                           : "—"}{" "}
@@ -118,23 +137,25 @@ export default function Student() {
                           ? new Date(paper.access_end).toLocaleString()
                           : "Open-ended"}
                       </td>
-                      <td className="px-6 py-3">
+                      <td className="px-5 py-3">
                         {paper.encrypted_cid ? (
-                          <div className="flex flex-col gap-1">
-                            <button
+                          <div className="flex flex-col gap-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              isLoading={downloadingId === paper.id}
                               onClick={() => handleDownload(paper.id, paper.s_code)}
-                              disabled={downloadingId === paper.id}
-                              className="text-blue-600 hover:underline disabled:text-gray-400 text-sm"
                             >
                               {downloadingId === paper.id ? "Downloading..." : "Download PDF"}
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              isLoading={verifyingId === paper.id}
                               onClick={() => handleVerify(paper.id, paper.s_code)}
-                              disabled={verifyingId === paper.id}
-                              className="text-purple-600 hover:underline disabled:text-gray-400 text-sm"
                             >
                               {verifyingId === paper.id ? "Verifying..." : "Verify on Blockchain"}
-                            </button>
+                            </Button>
                           </div>
                         ) : (
                           paper.paper ? (
@@ -142,44 +163,46 @@ export default function Student() {
                               href={paper.paper}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-blue-600 hover:underline text-sm"
+                              className="text-sm text-primary-600 hover:underline"
                             >
                               Download PDF
                             </a>
                           ) : (
-                            <span className="text-gray-400 text-sm">N/A</span>
+                            <span className="text-neutral-400 text-sm">N/A</span>
                           )
                         )}
                       </td>
-                      <td className="px-6 py-3">
+                      <td className="px-5 py-3">
                         {verificationResults[paper.id] ? (
-                          <div className="text-xs">
+                          <div className="text-xs space-y-0.5">
                             {verificationResults[paper.id].verified ? (
-                              <div className="text-green-600 font-medium">✓ Verified on-chain</div>
+                              <Badge variant="success">✓ Verified on-chain</Badge>
                             ) : (
-                              <div className="text-red-600 font-medium">⚠ {verificationResults[paper.id].message}</div>
+                              <Badge variant="danger">{verificationResults[paper.id].message}</Badge>
                             )}
                             {!verificationResults[paper.id].tx_hash && verificationResults[paper.id].timestamp && (
-                              <div className="text-gray-400 mt-1">
+                              <div className="text-neutral-400 mt-1">
                                 {new Date(verificationResults[paper.id].timestamp * 1000).toLocaleString()}
                               </div>
                             )}
                             {verificationResults[paper.id].tx_hash && (
-                              <div className="text-gray-400 mt-1 truncate" title={verificationResults[paper.id].tx_hash}>
-                                TX: {verificationResults[paper.id].tx_hash.slice(0, 10)}...
+                              <div className="text-neutral-400 mt-1 truncate max-w-[180px]" title={verificationResults[paper.id].tx_hash}>
+                                TX: {verificationResults[paper.id].tx_hash.slice(0, 10)}…
                               </div>
                             )}
                           </div>
-                        ) : null}
+                        ) : (
+                          <span className="text-neutral-400 text-xs">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
+          </Card>
+        )}
       </div>
-    </>
+    </Layout>
   );
 }
