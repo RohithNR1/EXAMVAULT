@@ -18,6 +18,7 @@ import {
   CardSkeleton,
 } from "../components/ui";
 import { useToast } from "../contexts/ToastContext";
+import { COE_SELECT_OPTIONS } from "../data/selectOptions";
 
 export default function COE() {
   const toast = useToast();
@@ -215,9 +216,9 @@ export default function COE() {
                     value={course}
                     onChange={(e) => setCourse(e.target.value)}
                   >
-                    <option>None</option>
-                    <option>B.E.</option>
-                    <option>M.E.</option>
+                    {COE_SELECT_OPTIONS.course.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
                   </select>
                 </label>
 
@@ -228,15 +229,9 @@ export default function COE() {
                     value={semester}
                     onChange={(e) => setSemester(e.target.value)}
                   >
-                    <option>None</option>
-                    <option>I</option>
-                    <option>II</option>
-                    <option>III</option>
-                    <option>IV</option>
-                    <option>V</option>
-                    <option>VI</option>
-                    <option>VII</option>
-                    <option>VIII</option>
+                    {COE_SELECT_OPTIONS.semester.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
                   </select>
                 </label>
 
@@ -247,13 +242,9 @@ export default function COE() {
                     value={branch}
                     onChange={(e) => setBranch(e.target.value)}
                   >
-                    <option>None</option>
-                    <option>CSE</option>
-                    <option>IT</option>
-                    <option>ECE</option>
-                    <option>EEE</option>
-                    <option>MECH</option>
-                    <option>BioTech</option>
+                    {COE_SELECT_OPTIONS.branch.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
                   </select>
                 </label>
 
@@ -264,13 +255,9 @@ export default function COE() {
                     value={subject}
                     onChange={(e) => setSubject(e.target.value)}
                   >
-                    <option>None</option>
-                    <option>Internet of Things</option>
-                    <option>Parallel Computing</option>
-                    <option>Cryptography</option>
-                    <option>Big Data Analytics</option>
-                    <option>MACHINE LEARNING</option>
-                    <option>CLOUD COMPUTING</option>
+                    {COE_SELECT_OPTIONS.subject.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
                   </select>
                 </label>
 

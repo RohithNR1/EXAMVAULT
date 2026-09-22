@@ -1,48 +1,8 @@
 import { useState } from "react";
 import { register } from "../api/auth";
 import { useNavigate } from "react-router-dom";
-import {
-  Button,
-  Input,
-  Card,
-  ErrorState,
-} from "../components/ui";
-
-// Hardcoded reference data sourced from the existing system defaults.
-// Kept separate from the auth layer so it can later be replaced by getSubjectCodes()
-// once the frontend endpoint is decoupled from authentication.
-const COURSES = [
-  { value: "", label: "Select Course" },
-  { value: "B.E.", label: "B.E." },
-  { value: "M.E.", label: "M.E." },
-];
-
-const SEMESTERS = [
-  { value: "", label: "Select Semester" },
-  "I", "II", "III", "IV", "V", "VI", "VII", "VIII",
-].map((s) => ({ value: s, label: String(s) }));
-
-const BRANCHES = [
-  { value: "", label: "Select Branch" },
-  "CSE", "IT", "ECE", "EEE", "MECH", "BioTech",
-].map((b) => ({ value: b, label: b }));
-
-const SUBJECTS = [
-  { value: "", label: "Select Subject" },
-  "Internet of Things",
-  "Parallel Computing",
-  "Cryptography",
-  "Big Data Analytics",
-  "MACHINE LEARNING",
-  "CLOUD COMPUTING",
-];
-
-const ROLES = [
-  { value: "teacher", label: "Teacher" },
-  { value: "coe", label: "COE" },
-  { value: "student", label: "Student" },
-  { value: "superintendent", label: "Superintendent" },
-];
+import { Button, Input, Card, ErrorState } from "../components/ui";
+import { COURSES, SEMESTERS, BRANCHES, SUBJECTS, ROLES } from "../data/selectOptions";
 
 export default function Register() {
   const [form, setForm] = useState({
