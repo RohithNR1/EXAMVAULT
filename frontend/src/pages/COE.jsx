@@ -212,7 +212,7 @@ export default function COE() {
                 <label className="block">
                   <span className="text-sm text-neutral-600">Course</span>
                   <select
-                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 text-sm"
+                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50 text-sm"
                     value={course}
                     onChange={(e) => setCourse(e.target.value)}
                   >
@@ -225,7 +225,7 @@ export default function COE() {
                 <label className="block">
                   <span className="text-sm text-neutral-600">Semester</span>
                   <select
-                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 text-sm"
+                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50 text-sm"
                     value={semester}
                     onChange={(e) => setSemester(e.target.value)}
                   >
@@ -238,7 +238,7 @@ export default function COE() {
                 <label className="block">
                   <span className="text-sm text-neutral-600">Branch</span>
                   <select
-                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 text-sm"
+                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50 text-sm"
                     value={branch}
                     onChange={(e) => setBranch(e.target.value)}
                   >
@@ -251,7 +251,7 @@ export default function COE() {
                 <label className="block">
                   <span className="text-sm text-neutral-600">Subject</span>
                   <select
-                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 text-sm"
+                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50 text-sm"
                     value={subject}
                     onChange={(e) => setSubject(e.target.value)}
                   >
@@ -350,7 +350,7 @@ export default function COE() {
                         {grouped[s_code].map((r) => (
                           <div
                             key={r.id}
-                            className="flex justify-between items-center rounded-md bg-white px-3 py-2 border border-neutral-100"
+                            className="flex justify-between items-center rounded-lg bg-surface px-3 py-2 border border-neutral-100"
                           >
                             <div className="text-sm text-neutral-700 truncate max-w-[60%]">
                               {r.teacher_first_name} {r.teacher_last_name} ({r.tusername})

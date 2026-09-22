@@ -206,7 +206,7 @@ export default function Teacher() {
         {/* Pending Requests */}
         <section>
           <h2 className="text-lg font-semibold text-neutral-800 mb-4 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-warning-500" />
+            <span className="w-2 h-2 rounded-full bg-warning-500" aria-hidden="true" />
             Pending Requests
           </h2>
           {loading ? (
@@ -239,7 +239,7 @@ export default function Teacher() {
         {/* Accepted Requests */}
         <section>
           <h2 className="text-lg font-semibold text-neutral-800 mb-4 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-success-500" />
+            <span className="w-2 h-2 rounded-full bg-success-500" aria-hidden="true" />
             Accepted / Uploaded
           </h2>
           {loading ? (
