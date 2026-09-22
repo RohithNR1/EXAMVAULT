@@ -156,7 +156,7 @@ export default function Register() {
                 <label className="block">
                   <span className="text-sm font-medium text-neutral-700">Role *</span>
                   <select
-                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 bg-white py-2 px-3"
+                    className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50 py-2 px-3"
                     value={form.role}
                     onChange={(e) => set("role", e.target.value)}
                     required
@@ -173,7 +173,7 @@ export default function Register() {
                     <label className="block">
                       <span className="text-sm font-medium text-neutral-700">Course</span>
                       <select
-                        className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 bg-white py-2 px-3"
+                        className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50 py-2 px-3"
                         value={form.course}
                         onChange={(e) => set("course", e.target.value)}
                       >
@@ -185,7 +185,7 @@ export default function Register() {
                     <label className="block">
                       <span className="text-sm font-medium text-neutral-700">Semester</span>
                       <select
-                        className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 bg-white py-2 px-3"
+                        className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50 py-2 px-3"
                         value={form.semester}
                         onChange={(e) => set("semester", e.target.value)}
                       >
@@ -197,7 +197,7 @@ export default function Register() {
                     <label className="block">
                       <span className="text-sm font-medium text-neutral-700">Branch</span>
                       <select
-                        className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 bg-white py-2 px-3"
+                        className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50 py-2 px-3"
                         value={form.branch}
                         onChange={(e) => set("branch", e.target.value)}
                       >
@@ -209,7 +209,7 @@ export default function Register() {
                     <label className="block">
                       <span className="text-sm font-medium text-neutral-700">Subject</span>
                       <select
-                        className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50 bg-white py-2 px-3"
+                        className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50 py-2 px-3"
                         value={form.subject}
                         onChange={(e) => set("subject", e.target.value)}
                       >

@@ -163,7 +163,7 @@ export default function Superintendent() {
                 <div>
                   <label className="block text-xs font-medium text-neutral-600 mb-1">Action</label>
                   <input
-                    className="rounded-lg border-neutral-300 shadow-soft text-sm w-40 focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
+                    className="rounded-lg border-neutral-300 shadow-soft text-sm w-40 focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50"
                     placeholder="e.g. paper.uploaded"
                     value={logFilter.action}
                     onChange={(e) => handleFilterChange("action", e.target.value)}
@@ -172,7 +172,7 @@ export default function Superintendent() {
                 <div>
                   <label className="block text-xs font-medium text-neutral-600 mb-1">S-Code</label>
                   <input
-                    className="rounded-lg border-neutral-300 shadow-soft text-sm w-32 focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
+                    className="rounded-lg border-neutral-300 shadow-soft text-sm w-32 focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50"
                     placeholder="e.g. 15CS51"
                     value={logFilter.s_code}
                     onChange={(e) => handleFilterChange("s_code", e.target.value)}
@@ -182,7 +182,7 @@ export default function Superintendent() {
                   <label className="block text-xs font-medium text-neutral-600 mb-1">Start Date</label>
                   <input
                     type="date"
-                    className="rounded-lg border-neutral-300 shadow-soft text-sm focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
+                    className="rounded-lg border-neutral-300 shadow-soft text-sm focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50"
                     value={logFilter.start}
                     onChange={(e) => handleFilterChange("start", e.target.value)}
                   />
@@ -191,7 +191,7 @@ export default function Superintendent() {
                   <label className="block text-xs font-medium text-neutral-600 mb-1">End Date</label>
                   <input
                     type="date"
-                    className="rounded-lg border-neutral-300 shadow-soft text-sm focus:border-primary-500 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
+                    className="rounded-lg border-neutral-300 shadow-soft text-sm focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50"
                     value={logFilter.end}
                     onChange={(e) => handleFilterChange("end", e.target.value)}
                   />
