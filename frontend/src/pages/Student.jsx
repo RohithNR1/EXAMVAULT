@@ -109,7 +109,7 @@ export default function Student() {
         ) : (
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm" aria-label="Exam results">
                 <thead className="bg-primary-600 text-white">
                   <tr>
                     <th className="px-5 py-3 text-left font-medium" scope="col">Subject</th>

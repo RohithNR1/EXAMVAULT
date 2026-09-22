@@ -222,7 +222,7 @@ export default function Superintendent() {
               {/* Table */}
               {!loading && !logsError && logs.length > 0 && (
                 <div className="overflow-x-auto border border-neutral-200 rounded-lg">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm" aria-label="Audit logs">
                     <thead>
                       <tr className="bg-neutral-50 border-b border-neutral-200">
                         <th className="text-left px-3 py-2 font-medium text-neutral-600 whitespace-nowrap" scope="col">Timestamp</th>
@@ -272,6 +272,7 @@ export default function Superintendent() {
                     size="sm"
                     disabled={logMeta.page <= 1}
                     onClick={() => { loadLogs(logMeta.page - 1); }}
+                    aria-label="Previous page"
                   >
                     Prev
                   </Button>
@@ -283,6 +284,7 @@ export default function Superintendent() {
                     size="sm"
                     disabled={logMeta.page >= logMeta.total_pages}
                     onClick={() => { loadLogs(logMeta.page + 1); }}
+                    aria-label="Next page"
                   >
                     Next
                   </Button>
