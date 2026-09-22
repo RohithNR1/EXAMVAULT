@@ -2,6 +2,7 @@ import { useState } from "react";
 import { login } from "../api/auth";
 import { useNavigate } from "react-router-dom";
 import { Button, Input, Card, ErrorState } from "../components/ui";
+import { useToast } from "../contexts/ToastContext";
 
 export default function Login() {
   const [username, setU] = useState("");
@@ -9,6 +10,7 @@ export default function Login() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const nav = useNavigate();
+  const toast = useToast();
 
   const submit = async (e) => {
     e.preventDefault();
@@ -41,7 +43,10 @@ export default function Login() {
       else nav("/superintendent");
     } catch (err) {
       console.error("Login failed:", err);
-      setError("Invalid username or password");
+      const msg = err.response?.data?.detail || err.response?.data?.message || "Invalid username or password";
+      const display = typeof msg === "string" ? msg : "Invalid username or password";
+      setError(display);
+      toast("error", null, display);
     } finally {
       setLoading(false);
     }

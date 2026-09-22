@@ -3,6 +3,7 @@ import { register } from "../api/auth";
 import { useNavigate } from "react-router-dom";
 import { Button, Input, Card, ErrorState } from "../components/ui";
 import { COURSES, SEMESTERS, BRANCHES, SUBJECTS, ROLES } from "../data/selectOptions";
+import { useToast } from "../contexts/ToastContext";
 
 export default function Register() {
   const [form, setForm] = useState({
@@ -22,6 +23,7 @@ export default function Register() {
   const [submitError, setSubmitError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const nav = useNavigate();
+  const toast = useToast();
 
   const set = (k, v) => setForm({ ...form, [k]: v });
 
@@ -66,7 +68,9 @@ export default function Register() {
           ([k, v]) => `${k}: ${Array.isArray(v) ? v[0] : v}`
         ).join("; ") ||
         "Registration failed";
-      setSubmitError(typeof msg === "string" ? msg : "Registration failed");
+      const display = typeof msg === "string" ? msg : "Registration failed";
+      setSubmitError(display);
+      toast("error", null, display);
     } finally {
       setSubmitting(false);
     }
