@@ -286,29 +286,35 @@ export default function COE() {
 
                 <div className="pt-2">
                   <span className="text-sm font-medium text-neutral-700">Available Teachers</span>
-                  {teachers.length === 0 && (
-                    <p className="text-sm text-neutral-500 mt-1">No teachers available</p>
-                  )}
-                  <div className="space-y-2 mt-2">
-                    {teachers.map((t) => (
-                      <div
-                        key={t.id}
-                        className="flex items-center justify-between rounded-lg border border-neutral-200 px-3 py-2.5 bg-surface"
-                      >
-                        <div className="text-sm text-neutral-700">
-                          {t.first_name} {t.last_name}{" "}
-                          <span className="text-neutral-500">({t.username})</span>
-                        </div>
-                        <Button
-                          variant="success"
-                          size="sm"
-                          onClick={() => openSendRequestModal(t)}
-                        >
-                          Send Request
-                        </Button>
+                  {teachersLoading ? (
+                    <CardSkeleton lines={3} />
+                  ) : (
+                    <>
+                      {teachers.length === 0 && (
+                        <p className="text-sm text-neutral-500 mt-1">No teachers available</p>
+                      )}
+                      <div className="space-y-2 mt-2">
+                        {teachers.map((t) => (
+                          <div
+                            key={t.id}
+                            className="flex items-center justify-between rounded-lg border border-neutral-200 px-3 py-2.5 bg-surface"
+                          >
+                            <div className="text-sm text-neutral-700">
+                              {t.first_name} {t.last_name}{" "}
+                              <span className="text-neutral-500">({t.username})</span>
+                            </div>
+                            <Button
+                              variant="success"
+                              size="sm"
+                              onClick={() => openSendRequestModal(t)}
+                            >
+                              Send Request
+                            </Button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </>
+                  )}
                 </div>
               </div>
               )}
@@ -457,7 +463,7 @@ export default function COE() {
           </>
         }
       >
-        <div className="max-h-[360px] overflow-auto space-y-2 pr-1">
+        <div className="max-h-[360px] overflow-auto space-y-2 pr-1" role="radiogroup" aria-labelledby="finalize-modal-title">
           {candidatePapers.length === 0 ? (
             <p className="text-sm text-neutral-500">No uploaded papers</p>
           ) : (
@@ -473,6 +479,7 @@ export default function COE() {
                 role="radio"
                 aria-checked={selectedCandidateId === mp.id}
                 tabIndex={0}
+                aria-label={`Paper ${mp.paper_number}${mp.scrutiny ? `, score ${mp.scrutiny.score_percent}% (${mp.scrutiny.quality})` : ', no scrutiny results yet'}`}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedCandidateId(mp.id); }}
               >
                 <input

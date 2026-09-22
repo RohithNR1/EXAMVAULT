@@ -186,6 +186,7 @@ export default function Teacher() {
           <div className="flex items-center gap-3">
             <input
               type="file"
+              accept=".pdf,.doc,.docx,.txt"
               aria-label="Upload exam paper"
               className="block w-full text-sm text-neutral-600 file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100"
               onChange={(e) => handleUpload(req.id, e.target.files[0])}

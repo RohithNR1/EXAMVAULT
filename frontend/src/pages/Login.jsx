@@ -78,8 +78,8 @@ export default function Login() {
               <div className="space-y-4">
                 {error && (
                   <ErrorState
-                    title={error}
-                    description="Please check your username and password and try again."
+                    title="Sign-in failed"
+                    description={error}
                   />
                 )}
 
