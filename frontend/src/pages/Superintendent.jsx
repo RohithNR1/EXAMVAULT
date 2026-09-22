@@ -9,14 +9,17 @@ import {
   ErrorState,
   CardSkeleton,
 } from "../components/ui";
+import { useToast } from "../contexts/ToastContext";
 
 export default function Superintendent() {
+  const toast = useToast();
   const [papers, setPapers] = useState([]);
   const [logs, setLogs] = useState([]);
   const [logFilter, setLogFilter] = useState({ action: "", s_code: "", start: "", end: "" });
   const [logMeta, setLogMeta] = useState({ count: 0, total_pages: 1, page: 1 });
   const [loading, setLoading] = useState(false);
   const [papersError, setPapersError] = useState(null);
+  const [logsError, setLogsError] = useState(null);
 
   const loadPapers = async () => {
     try {
@@ -32,6 +35,7 @@ export default function Superintendent() {
 
   const loadLogs = async (page = 1, filters = logFilter) => {
     setLoading(true);
+    setLogsError(null);
     try {
       const params = { page, page_size: 20, ...filters };
       const qs = new URLSearchParams(params).toString();
@@ -40,6 +44,7 @@ export default function Superintendent() {
       setLogMeta({ count: data.count, total_pages: data.total_pages, page: data.page });
     } catch (e) {
       console.error("Failed to load audit logs", e);
+      setLogsError("Failed to load audit logs.");
     } finally {
       setLoading(false);
     }
@@ -65,10 +70,10 @@ export default function Superintendent() {
   const info = async (id) => {
     try {
       const { data } = await getDecryptInfo(id);
-      alert(`Subject: ${data.s_code}\nURL: ${data.paper_url || "N/A"}`);
+      toast("info", "Paper Info", `Subject: ${data.s_code}\nURL: ${data.paper_url || "N/A"}`);
     } catch (e) {
       console.error("Failed to get decrypt info", e);
-      alert("Failed to retrieve paper info.");
+      toast("error", null, "Failed to retrieve paper info.");
     }
   };
 
@@ -91,7 +96,7 @@ export default function Superintendent() {
 
   return (
     <Layout>
-      <div className="space-y-8 max-w-6xl">
+      <div className="space-y-8 max-w-5xl mx-auto">
 
         {/* Final Papers Section */}
         <section>
@@ -204,8 +209,18 @@ export default function Superintendent() {
               {/* Loading state */}
               {loading && <CardSkeleton lines={3} />}
 
+              {/* Error state */}
+              {!loading && logsError && (
+                <ErrorState
+                  title="Failed to load audit logs"
+                  description={logsError}
+                  retry="Retry audit log"
+                  onRetry={() => loadLogs(1)}
+                />
+              )}
+
               {/* Table */}
-              {!loading && logs.length > 0 && (
+              {!loading && !logsError && logs.length > 0 && (
                 <div className="overflow-x-auto border border-neutral-200 rounded-lg">
                   <table className="w-full text-sm">
                     <thead>

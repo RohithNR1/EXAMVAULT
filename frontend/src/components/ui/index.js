@@ -7,3 +7,4 @@ export { default as Modal } from "./Modal";
 export { default as Skeleton, CardSkeleton } from "./Skeleton";
 export { default as EmptyState } from "./EmptyState";
 export { default as ErrorState } from "./ErrorState";
+export { default as Toast } from "./Toast";

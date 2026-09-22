@@ -9,8 +9,10 @@ import {
   ErrorState,
   CardSkeleton,
 } from "../components/ui";
+import { useToast } from "../contexts/ToastContext";
 
 export default function Student() {
+  const toast = useToast();
   const [papers, setPapers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [downloadingId, setDownloadingId] = useState(null);
@@ -58,7 +60,7 @@ export default function Student() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Download failed:", err);
-      alert(err.response?.data?.detail || "Failed to download paper");
+      toast("error", null, err.response?.data?.detail || "Failed to download paper");
     } finally {
       setDownloadingId(null);
     }
@@ -81,7 +83,7 @@ export default function Student() {
   return (
     <Layout>
       <div className="max-w-5xl mx-auto">
-        <h1 className="text-2xl font-bold text-neutral-800 mb-6">My Exam Results</h1>
+        <h2 className="text-2xl font-bold text-neutral-800 mb-6">My Exam Results</h2>
 
         {loading ? (
           <div className="space-y-4">

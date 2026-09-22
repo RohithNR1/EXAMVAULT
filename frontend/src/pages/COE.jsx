@@ -15,9 +15,12 @@ import {
   Modal,
   EmptyState,
   ErrorState,
+  CardSkeleton,
 } from "../components/ui";
+import { useToast } from "../contexts/ToastContext";
 
 export default function COE() {
+  const toast = useToast();
   const [course, setCourse] = useState("None");
   const [semester, setSemester] = useState("None");
   const [branch, setBranch] = useState("None");
@@ -42,8 +45,11 @@ export default function COE() {
   const [requests, setRequests] = useState([]);
   const [activeTab, setActiveTab] = useState("requests");
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [teachersLoading, setTeachersLoading] = useState(false);
 
   const loadRequests = async () => {
+    setLoading(true);
     try {
       setError(null);
       const { data } = await coeListRequests();
@@ -52,6 +58,8 @@ export default function COE() {
       console.error(err);
       setError("Failed to load requests");
       setRequests([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -61,9 +69,10 @@ export default function COE() {
 
   const handleSubmitSearch = async () => {
     if ([course, semester, branch, subject].some((v) => !v || v === "None")) {
-      alert("Select course, semester, branch, subject");
+      toast("warning", null, "Select course, semester, branch, subject");
       return;
     }
+    setTeachersLoading(true);
     try {
       const payload = { course, semester, branch, subject };
       const { data } = await coeGetTeachers(payload);
@@ -74,7 +83,9 @@ export default function COE() {
       setDefaultQPatternUrl(data.default_q_pattern_url || null);
     } catch (err) {
       console.error(err);
-      alert("Failed to fetch teachers");
+      toast("error", null, "Failed to fetch teachers");
+    } finally {
+      setTeachersLoading(false);
     }
   };
 
@@ -86,8 +97,8 @@ export default function COE() {
   };
 
   const handleConfirmRequest = async () => {
-    if (!targetTeacher) return alert("No teacher selected");
-    if (!scode || !reqDeadline) return alert("Set deadline");
+    if (!targetTeacher) return toast("warning", null, "No teacher selected");
+    if (!scode || !reqDeadline) return toast("warning", null, "Set deadline");
 
     try {
       const form = new FormData();
@@ -101,14 +112,14 @@ export default function COE() {
       if (defaultQPatternUrl) form.append("q_pattern", await urlToFile(defaultQPatternUrl));
 
       await coeCreateRequest(form);
-      alert("Request created successfully");
+      toast("success", null, "Request created successfully");
       setSendModalOpen(false);
       setTargetTeacher(null);
       await loadRequests();
       await handleSubmitSearch();
     } catch (err) {
       console.error(err);
-      alert("Failed to create request");
+      toast("error", null, "Failed to create request");
     }
   };
 
@@ -120,7 +131,7 @@ export default function COE() {
   };
 
   const handleOpenFinalize = async () => {
-    if (!scode) return alert("Submit subject first");
+    if (!scode) return toast("warning", null, "Submit subject first");
     try {
       const { data } = await coeGetCandidates(scode);
       setCandidatePapers(data || []);
@@ -128,15 +139,15 @@ export default function COE() {
       setFinalizeModalOpen(true);
     } catch (err) {
       console.error(err);
-      alert("No uploaded papers found");
+      toast("error", null, "No uploaded papers found");
     }
   };
 
   const handleFinalizePaper = async () => {
-    if (!selectedCandidateId) return alert("Select a paper");
+    if (!selectedCandidateId) return toast("warning", null, "Select a paper");
     try {
       await coeFinalize(selectedCandidateId);
-      alert("Paper finalized successfully");
+      toast("success", null, "Paper finalized successfully");
       setFinalizeModalOpen(false);
       setCandidatePapers([]);
       setSelectedCandidateId(null);
@@ -144,7 +155,7 @@ export default function COE() {
       await handleSubmitSearch();
     } catch (err) {
       console.error(err);
-      alert("Finalize failed");
+      toast("error", null, "Finalize failed");
     }
   };
 
@@ -161,9 +172,10 @@ export default function COE() {
 
   return (
     <Layout>
-      {/* Tab Navigation */}
-      <div className="border-b border-neutral-200 mb-6">
-        <nav className="flex gap-1" aria-label="COE sections" role="tablist">
+      <div className="max-w-5xl mx-auto space-y-6">
+        {/* Tab Navigation */}
+        <div className="border-b border-neutral-200 mb-6">
+          <nav className="flex gap-1" aria-label="COE sections" role="tablist">
           {tabItems.map((tab) => (
             <button
               key={tab.key}
@@ -192,6 +204,9 @@ export default function COE() {
               <h2 className="text-lg font-semibold text-neutral-800">Send Request</h2>
             </Card.Header>
             <Card.Body>
+              {loading ? (
+                <CardSkeleton lines={3} />
+              ) : (
               <div className="space-y-3">
                 <label className="block">
                   <span className="text-sm text-neutral-600">Course</span>
@@ -260,7 +275,7 @@ export default function COE() {
                 </label>
 
                 <div className="flex gap-2 pt-1">
-                  <Button variant="primary" size="sm" onClick={handleSubmitSearch}>
+                  <Button variant="primary" size="sm" onClick={handleSubmitSearch} isLoading={teachersLoading}>
                     Submit
                   </Button>
                   <Button
@@ -309,6 +324,7 @@ export default function COE() {
                   </div>
                 </div>
               </div>
+              )}
             </Card.Body>
           </Card>
 
@@ -318,7 +334,9 @@ export default function COE() {
               <h2 className="text-lg font-semibold text-neutral-800">Request Status</h2>
             </Card.Header>
             <Card.Body>
-              {error ? (
+              {loading ? (
+                <CardSkeleton lines={3} />
+              ) : error ? (
                 <ErrorState
                   title="Failed to load requests"
                   description={error}
@@ -509,6 +527,7 @@ export default function COE() {
           )}
         </div>
       </Modal>
+      </div>
     </Layout>
   );
 }

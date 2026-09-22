@@ -15,8 +15,10 @@ import {
   ErrorState,
   CardSkeleton,
 } from "../components/ui";
+import { useToast } from "../contexts/ToastContext";
 
 export default function Teacher() {
+  const toast = useToast();
   const [pendingRequests, setPendingRequests] = useState([]);
   const [acceptedRequests, setAcceptedRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -51,7 +53,7 @@ export default function Teacher() {
       fetchRequests();
     } catch (e) {
       console.error(e);
-      alert("Accept failed");
+      toast("error", null, "Accept failed");
     }
   };
 
@@ -61,23 +63,23 @@ export default function Teacher() {
       fetchRequests();
     } catch (e) {
       console.error(e);
-      alert("Reject failed");
+      toast("error", null, "Reject failed");
     }
   };
 
   const handleUpload = async (id, file) => {
     if (!file) {
-      alert("Choose file to upload");
+      toast("warning", null, "Choose file to upload");
       return;
     }
     setUploadingId(id);
     try {
       await uploadPaper(id, file);
-      alert("Uploaded");
+      toast("success", null, "Uploaded");
       fetchRequests();
     } catch (e) {
       console.error(e);
-      alert("Upload failed");
+      toast("error", null, "Upload failed");
     } finally {
       setUploadingId(null);
     }
