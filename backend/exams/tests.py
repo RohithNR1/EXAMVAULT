@@ -198,6 +198,74 @@ class SecurityHardeningTests(TestCase):
         self.assertEqual(user.role, "teacher")  # Default assigned by server
         user.delete()
 
+    def test_teacher_registration_with_empty_academic_fields(self):
+        """Teacher registration with empty-string academic fields (frontend bug fix)."""
+        from exams.serializers import RegisterSerializer
+        payload = {
+            "username": "teacher_empty",
+            "password": "password123",
+            "email": "teacher_empty@example.com",
+            "first_name": "Empty",
+            "last_name": "Fields",
+            "course": "",
+            "semester": "",
+            "branch": "",
+            "subject": "",
+        }
+        ser = RegisterSerializer(data=payload)
+        self.assertTrue(ser.is_valid(), str(ser.errors))
+        user = ser.save()
+        self.assertEqual(user.role, "teacher")
+        self.assertEqual(user.course, "None")
+        self.assertEqual(user.semester, "None")
+        self.assertEqual(user.branch, "None")
+        self.assertEqual(user.subject, "None")
+        user.delete()
+
+    def test_teacher_registration_with_omitted_academic_fields(self):
+        """Teacher registration without academic fields uses model defaults."""
+        from exams.serializers import RegisterSerializer
+        payload = {
+            "username": "teacher_missing",
+            "password": "password123",
+            "email": "teacher_missing@example.com",
+            "first_name": "Missing",
+            "last_name": "Fields",
+        }
+        ser = RegisterSerializer(data=payload)
+        self.assertTrue(ser.is_valid())
+        user = ser.save()
+        self.assertEqual(user.role, "teacher")
+        self.assertEqual(user.course, "None")
+        self.assertEqual(user.semester, "None")
+        self.assertEqual(user.branch, "None")
+        self.assertEqual(user.subject, "None")
+        user.delete()
+
+    def test_student_registration_with_valid_academic_fields(self):
+        """Student registration preserves submitted academic values."""
+        from exams.serializers import RegisterSerializer
+        payload = {
+            "username": "student_valid",
+            "password": "password123",
+            "email": "student_valid@example.com",
+            "first_name": "Valid",
+            "last_name": "Student",
+            "course": "B.E.",
+            "semester": "V",
+            "branch": "CSE",
+            "subject": "MACHINE LEARNING",
+        }
+        ser = RegisterSerializer(data=payload)
+        self.assertTrue(ser.is_valid())
+        user = ser.save()
+        self.assertEqual(user.role, "teacher")  # Server ignores role field
+        self.assertEqual(user.course, "B.E.")
+        self.assertEqual(user.semester, "V")
+        self.assertEqual(user.branch, "CSE")
+        self.assertEqual(user.subject, "MACHINE LEARNING")
+        user.delete()
+
     def test_teacher_accept_requires_teacher_role(self):
         """Only teachers can accept requests."""
         from exams.views_api import TeacherAcceptRequest

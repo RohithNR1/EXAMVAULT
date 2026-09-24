@@ -16,6 +16,12 @@ class UserSerializer(serializers.ModelSerializer):
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=6)
     # role is intentionally excluded — server always assigns 'teacher' to prevent self-assignment of privileged roles.
+    # Academic fields are made optional so Teacher registrations (which don't use them) work
+    # while Student registrations still validate choices when values are provided.
+    course = serializers.CharField(required=False, allow_blank=True, default="None")
+    semester = serializers.CharField(required=False, allow_blank=True, default="None")
+    branch = serializers.CharField(required=False, allow_blank=True, default="None")
+    subject = serializers.CharField(required=False, allow_blank=True, default="None")
 
     class Meta:
         model = User
@@ -41,6 +47,13 @@ class RegisterSerializer(serializers.ModelSerializer):
         if not value.replace("-", "").replace("_", "").isalnum():
             raise serializers.ValidationError("O nome de usuário deve conter apenas letras, números, hífens e underscores.")
         return value.lower()
+
+    def validate(self, data):
+        # Normalize blank academic fields to the model's sentinel default.
+        for field in ("course", "semester", "branch", "subject"):
+            if not data.get(field):
+                data[field] = "None"
+        return data
 
     def create(self, validated_data):
         pwd = validated_data.pop("password")

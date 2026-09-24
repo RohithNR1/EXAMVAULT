@@ -58,7 +58,17 @@ export default function Register() {
     setErrors({});
     setSubmitting(true);
     try {
-      await register(form);
+      // Only include academic fields for student registrations; teachers do not
+      // need them and the backend expects either omitted values or valid choices.
+      const payload =
+        form.role === "student" ? form : {
+          username: form.username,
+          password: form.password,
+          email: form.email,
+          first_name: form.first_name,
+          last_name: form.last_name,
+        };
+      await register(payload);
       nav("/login");
     } catch (error) {
       console.error(error.response?.data);
