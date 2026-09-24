@@ -181,22 +181,20 @@ class SecurityHardeningTests(TestCase):
         self.assertIsInstance(settings.CORS_ALLOWED_ORIGINS, list)
         self.assertGreater(len(settings.CORS_ALLOWED_ORIGINS), 0)
 
-    def test_register_ignores_role_field(self):
-        """Registration must ignore any role passed in the request body."""
+    def test_register_rejects_privileged_roles(self):
+        """Registration must reject any attempt to self-assign a privileged role."""
         from exams.serializers import RegisterSerializer
-        payload = {
-            "username": "newuser",
-            "password": "password123",
-            "email": "new@example.com",
-            "first_name": "New",
-            "last_name": "User",
-            "role": "superintendent",  # Should be ignored
-        }
-        ser = RegisterSerializer(data=payload)
-        self.assertTrue(ser.is_valid())
-        user = ser.save()
-        self.assertEqual(user.role, "teacher")  # Default assigned by server
-        user.delete()
+        for bad_role in ("coe", "superintendent", "evaluator"):
+            payload = {
+                "username": f"pwnage_{bad_role}",
+                "password": "password123",
+                "email": f"{bad_role}@example.com",
+                "first_name": "Pwnage",
+                "last_name": bad_role.capitalize(),
+                "role": bad_role,
+            }
+            ser = RegisterSerializer(data=payload)
+            self.assertFalse(ser.is_valid(), f"Expected {bad_role} to be rejected, got: {ser.errors}")
 
     def test_teacher_registration_with_empty_academic_fields(self):
         """Teacher registration with empty-string academic fields (frontend bug fix)."""
@@ -243,7 +241,7 @@ class SecurityHardeningTests(TestCase):
         user.delete()
 
     def test_student_registration_with_valid_academic_fields(self):
-        """Student registration preserves submitted academic values."""
+        """Student registration preserves submitted academic values and role."""
         from exams.serializers import RegisterSerializer
         payload = {
             "username": "student_valid",
@@ -251,6 +249,7 @@ class SecurityHardeningTests(TestCase):
             "email": "student_valid@example.com",
             "first_name": "Valid",
             "last_name": "Student",
+            "role": "student",
             "course": "B.E.",
             "semester": "V",
             "branch": "CSE",
@@ -259,7 +258,7 @@ class SecurityHardeningTests(TestCase):
         ser = RegisterSerializer(data=payload)
         self.assertTrue(ser.is_valid())
         user = ser.save()
-        self.assertEqual(user.role, "teacher")  # Server ignores role field
+        self.assertEqual(user.role, "student")
         self.assertEqual(user.course, "B.E.")
         self.assertEqual(user.semester, "V")
         self.assertEqual(user.branch, "CSE")
@@ -1247,6 +1246,69 @@ class AuditLoggingTests(TestCase):
         force_authenticate(request, user=student)
         response = COECandidates(request)
         self.assertEqual(response.status_code, 403)
+
+    def test_non_coe_cannot_access_list_requests(self):
+        """Students and teachers must not be able to access COE list-requests endpoint."""
+        from exams.views_api import COEListRequests
+        from django.test.utils import setup_test_environment
+
+        # Create test data inside the test DB
+        SubjectCode = __import__("exams.models", fromlist=["SubjectCode"]).SubjectCode
+        req = Request.objects.create(tusername="teacher_block2", s_code="BLOCK01", status="Pending", total_marks=50)
+
+        # Teacher should get 403
+        teacher = CustomUser.objects.create_user(username="teacher_block2", password="secret123", role="teacher")
+        request = self.factory.get("/api/coe/list-requests/")
+        force_authenticate(request, user=teacher)
+        view = COEListRequests.as_view()(request)
+        self.assertEqual(view.status_code, 403)
+
+        # Student should get 403
+        student = CustomUser.objects.create_user(
+            username="bob_block", password="secret123", role="student",
+            course="B.E.", semester="V", branch="CSE", subject="MACHINE LEARNING",
+        )
+        request = self.factory.get("/api/coe/list-requests/")
+        force_authenticate(request, user=student)
+        view = COEListRequests.as_view()(request)
+        self.assertEqual(view.status_code, 403)
+
+        # COE should still get 200
+        coe = CustomUser.objects.create_user(username="coe_block", password="secret123", role="coe")
+        request = self.factory.get("/api/coe/list-requests/")
+        force_authenticate(request, user=coe)
+        view = COEListRequests.as_view()(request)
+        self.assertEqual(view.status_code, 200)
+        self.assertIn("candidate_id", view.data[0])
+
+    def test_non_coe_cannot_add_teacher(self):
+        """Only COE users may POST to /api/coe/requests/add/. Non-COE must get 403."""
+        from exams.views_api import COEAddTeacher
+
+        SubjectCode = __import__("exams.models", fromlist=["SubjectCode"]).SubjectCode
+        sc = SubjectCode.objects.create(s_code="ADDT01", subject="Add Teacher Test")
+        # Create a valid teacher user so the endpoint doesn't 404 on "teacher not found"
+        teacher_user = CustomUser.objects.create_user(
+            username="addteacher_target", password="secret123", role="teacher",
+            course="B.E.", semester="V", branch="CSE", subject="MACHINE LEARNING",
+        )
+
+        payload = {"s_code": "ADDT01", "g_id": str(teacher_user.id), "deadline": "2026-12-31"}
+
+        for bad_role in ("teacher", "student", "superintendent"):
+            bad_user = CustomUser.objects.create_user(
+                username=f"bad_{bad_role}", password="secret123", role=bad_role,
+            )
+            req = self.factory.post("/api/coe/requests/add/", payload, format="json")
+            force_authenticate(req, user=bad_user)
+            resp = COEAddTeacher(req)
+            self.assertEqual(resp.status_code, 403, f"{bad_role} should be forbidden from COEAddTeacher")
+
+        coe = CustomUser.objects.create_user(username="coe_addtest", password="secret123", role="coe")
+        req = self.factory.post("/api/coe/requests/add/", payload, format="json")
+        force_authenticate(req, user=coe)
+        resp = COEAddTeacher(req)
+        self.assertIn(resp.status_code, [201, 400], "COE should be allowed (400 may occur if files missing)")
 
     def test_candidate_id_irreversible_to_teacher_identity(self):
         """Candidate IDs must not leak the teacher's user ID or username."""

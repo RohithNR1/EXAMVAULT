@@ -13,11 +13,20 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+PUBLIC_ROLES = ("teacher", "student")
+PROTECTED_ROLES = ("coe", "superintendent", "evaluator")
+
+
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=6)
-    # role is intentionally excluded — server always assigns 'teacher' to prevent self-assignment of privileged roles.
-    # Academic fields are made optional so Teacher registrations (which don't use them) work
-    # while Student registrations still validate choices when values are provided.
+    # Accept role from the frontend; defaults to 'teacher' for backward compatibility.
+    # Only public roles are allowed — coe/superintendent/evaluator are rejected.
+    role = serializers.ChoiceField(
+        choices=[("teacher", "teacher"), ("student", "student")],
+        required=False,
+        default="teacher",
+        help_text="Public role for self-registration. coe/superintendent/evaluator are not self-service.",
+    )
     course = serializers.CharField(required=False, allow_blank=True, default="None")
     semester = serializers.CharField(required=False, allow_blank=True, default="None")
     branch = serializers.CharField(required=False, allow_blank=True, default="None")
@@ -31,6 +40,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             "email",
             "first_name",
             "last_name",
+            "role",
             "course",
             "semester",
             "branch",
@@ -48,6 +58,11 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("O nome de usuário deve conter apenas letras, números, hífens e underscores.")
         return value.lower()
 
+    def validate_role(self, value):
+        if value not in PUBLIC_ROLES:
+            raise serializers.ValidationError(f"Self-registration is only available for roles: {', '.join(PUBLIC_ROLES)}.")
+        return value
+
     def validate(self, data):
         # Normalize blank academic fields to the model's sentinel default.
         for field in ("course", "semester", "branch", "subject"):
@@ -57,9 +72,10 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         pwd = validated_data.pop("password")
+        role = validated_data.pop("role")
         user = User(**validated_data)
         user.set_password(pwd)
-        user.role = "teacher"  # All new registrations start as teacher by default
+        user.role = role
         user.save()
         return user
 

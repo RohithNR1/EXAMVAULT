@@ -596,6 +596,11 @@ class COEListRequests(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def list(self, request, *args, **kwargs):
+        if request.user.role != "coe":
+            return Response(
+                {"detail": "Only COE users can list requests"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         reqs = Request.objects.filter(status__in=["Pending", "Accepted", "Uploaded"]).order_by("-id")
         response_data = []
         for r in reqs:
@@ -673,6 +678,17 @@ def COEGetTeachers(request):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def COEAddTeacher(request):
+    if request.user.role != "coe":
+        _security_logger.warning("Role violation: user %s attempted COE action (add teacher)", request.user.username)
+        log_event(
+            action="role.violation.add_teacher",
+            actor=request.user.username,
+            role=request.user.role,
+            detail={"reason": "non-coe role"},
+            severity="warn",
+        )
+        return Response({"detail": "Only COE users can add teachers"}, status=403)
+
     s_code = request.data.get('s_code')
     syllabus_file = request.FILES.get('syllabus')  # optional
     q_pattern_file = request.FILES.get('q_pattern')  # optional
