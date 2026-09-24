@@ -29,7 +29,7 @@ export default function Teacher() {
     setLoading(true);
     setError(null);
     try {
-      const [pending, accepted] = await Promise.all([
+      const [{ data: pending }, { data: accepted }] = await Promise.all([
         getTeacherPending(),
         getTeacherAccepted(),
       ]);
