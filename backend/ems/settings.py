@@ -149,6 +149,7 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("FILE_UPLOAD_MAX_MEMORY_SIZE", 50 * 
 # Encryption folder
 ENCRYPTION_ROOT = MEDIA_ROOT / "encryption_keys"
 ENCRYPTION_ROOT.mkdir(parents=True, exist_ok=True)
+ENCRYPTION_MASTER_KEY = os.getenv("ENCRYPTION_MASTER_KEY")
 
 # IPFS / Blockchain environment
 IPFS_HOST = os.getenv("IPFS_HOST", "127.0.0.1")

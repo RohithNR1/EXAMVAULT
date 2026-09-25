@@ -39,8 +39,11 @@ export const coeListRequests = () => client.get("coe/requests/");
 export const coeGetCandidates = (s_code) =>
   client.get(`coe/candidates/?s_code=${encodeURIComponent(s_code)}`);
 
-export const coeFinalize = (id) =>
-  client.post(`coe/requests/${id}/finalize/`);
+export const coeFinalize = (anonymousId) =>
+  client.post(`coe/requests/${anonymousId}/finalize/`);
+
+export const coeSelectCandidate = (anonymousId) =>
+  client.post(`coe/requests/${anonymousId}/select/`);
 
 // Superintendent
 export const listFinalPapers = () =>

@@ -44,6 +44,8 @@ _ALLOWED_DETAIL_KEYS = {
     "status_code",
     "reason",
     "ip_address",
+    "request_id",
+    "anonymous_id",
 }
 
 

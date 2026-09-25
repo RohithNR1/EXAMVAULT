@@ -10,7 +10,6 @@ class ScrutinyResultSerializer(serializers.ModelSerializer):
         model = ScrutinyResult
         fields = [
             "id", 
-            "request_obj", 
             "request_info",
             "summary", 
             "created_at",
@@ -22,11 +21,10 @@ class ScrutinyResultSerializer(serializers.ModelSerializer):
         """Include basic request information for easier frontend display"""
         if obj.request_obj:
             return {
-                "id": obj.request_obj.id,
+                "anonymous_id": str(obj.request_obj.anonymous_id),
                 "subject_code": obj.request_obj.s_code,  # Fixed: use s_code instead of subject_code
-                "teacher_name": obj.request_obj.tusername,  # Fixed: use tusername field
                 "status": obj.request_obj.status,
-                "created_at": obj.request_obj.created_at if hasattr(obj.request_obj, 'created_at') else None
+                "created_at": getattr(obj.request_obj, "created_at", None),
             }
         return None
     

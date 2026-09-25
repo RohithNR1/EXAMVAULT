@@ -1,8 +1,10 @@
 # backend/exams/views_api.py
 import base64
+import ast
 import os
 import tempfile
 import logging
+import uuid
 
 from django.core.files import File
 from django.conf import settings
@@ -315,6 +317,7 @@ class TeacherUploadPaper(generics.GenericAPIView):
                     tmp.write(chunk)
                 tmp_path = tmp.name
             logger.debug("TeacherUploadPaper: saved temp uploaded file to %s", tmp_path)
+            enc_name = f"{r.anonymous_id}.pdf.encrypted"
 
             # --- Run comprehensive scrutiny analysis BEFORE encryption / IPFS upload ---
             scrutiny_result = None
@@ -338,7 +341,6 @@ class TeacherUploadPaper(generics.GenericAPIView):
 
             # --- Encrypt file and write encrypted bytes to file inside ENCRYPTION_ROOT ---
             # We try to call your encrypt_file function as before, but we ensure the encrypted path exists.
-            enc_name = f"{paper.name}.encrypted"
             enc_path = os.path.join(settings.ENCRYPTION_ROOT, enc_name)
             try:
                 # We assume encrypt_file accepts a file-like object and returns an encryption key (same as before).
@@ -351,7 +353,7 @@ class TeacherUploadPaper(generics.GenericAPIView):
                             return self._f.read()
                         def __str__(self): 
                             return os.path.basename(self._n)
-                    key = encrypt_file(_F(f, paper.name))
+                    key = encrypt_file(_F(f, f"{r.anonymous_id}.pdf"))
                 logger.debug("TeacherUploadPaper: encrypt_file returned key (len=%s)", None if key is None else (len(key) if isinstance(key, (bytes, bytearray)) else "non-bytes"))
             except Exception as e:
                 logger.exception("TeacherUploadPaper: encryption failed: %s", str(e))
@@ -590,8 +592,7 @@ class TeacherMyFinalPapers(generics.ListAPIView):
 # -------- COE -----------
 class COEListRequests(generics.ListAPIView):
     """
-    Return all active (non-finalized) requests for COE dashboard.
-    Active = Pending, Accepted, Uploaded (but not finalized).
+    Return all requests for COE dashboard, including finalized history.
     """
     permission_classes = [IsAuthenticated]
 
@@ -601,11 +602,13 @@ class COEListRequests(generics.ListAPIView):
                 {"detail": "Only COE users can list requests"},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        reqs = Request.objects.filter(status__in=["Pending", "Accepted", "Uploaded"]).order_by("-id")
+        reqs = Request.objects.filter(
+            status__in=["Pending", "Accepted", "Uploaded", "Finalized"]
+        ).order_by("-id")
         response_data = []
         for r in reqs:
             response_data.append({
-                "candidate_id": f"CAND-{r.id:04d}",
+                "anonymous_id": str(r.anonymous_id),
                 "s_code": r.s_code,
                 "status": r.status,
                 "selection_status": r.selection_status,
@@ -620,6 +623,9 @@ class COEListRequests(generics.ListAPIView):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def COEGetTeachers(request):
+    if request.user.role != "coe":
+        return Response({"detail": "Only COE users can access teacher options"}, status=403)
+
     course = request.data.get('course')
     semester = request.data.get('semester')
     branch = request.data.get('branch')
@@ -638,8 +644,6 @@ def COEGetTeachers(request):
         .values_list('tusername', flat=True)
         .distinct()
     )
-
-    uploaded_ids = list(Request.objects.filter(s_code=s_code, status='Uploaded').values('id'))
 
     queryset = User.objects.filter(
         course=course, semester=semester, branch=branch, subject=subject
@@ -669,7 +673,6 @@ def COEGetTeachers(request):
     return Response({
         'teachers': list(queryset),
         's_code': s_code,
-        'uploaded_request_ids': uploaded_ids,
         'default_syllabus_url': default_syllabus_url,
         'default_q_pattern_url': default_q_pattern_url
     })
@@ -733,7 +736,7 @@ def COEAddTeacher(request):
         severity="info",
     )
     new_teacher = User.objects.filter(username=username).values()
-    return Response({'new_teacher': list(new_teacher), 'request_id': obj.id}, status=201)
+    return Response({'new_teacher': list(new_teacher)}, status=201)
 
 
 @api_view(["GET"])
@@ -786,8 +789,9 @@ def COECandidates(request):
                 }
 
         response.append({
-            "candidate_id": f"CAND-{r.id:04d}",
+            "anonymous_id": str(r.anonymous_id),
             "paper_number": f"Paper {idx+1}",
+            "s_code": r.s_code,
             "status": r.status,
             "selection_status": r.selection_status,
             "uploaded_at": r.uploaded_at,
@@ -801,35 +805,29 @@ def COECandidates(request):
     return Response(response)
 
 
+def _resolve_coe_request(request, req_id=None):
+    """Resolve the COE-facing opaque identifier to an internal Request."""
+    anonymous_id = req_id
+    if anonymous_id is None:
+        anonymous_id = request.data.get("anonymous_id") or request.query_params.get("anonymous_id")
+    if not anonymous_id:
+        return None
+
+    try:
+        anonymous_uuid = uuid.UUID(str(anonymous_id))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+    return Request.objects.filter(anonymous_id=anonymous_uuid).first()
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def COESelectCandidate(request, req_id=None):
     if request.user.role != "coe":
         return Response({"detail": "Only COE users can perform this action"}, status=403)
 
-    # Resolve anonymous candidate_id to internal Request ID
-    requested_id = req_id
-    if requested_id is not None:
-        cid_str = str(requested_id)
-        if cid_str.startswith("CAND-"):
-            try:
-                requested_id = int(cid_str.replace("CAND-", ""))
-            except ValueError:
-                requested_id = None
-        else:
-            try:
-                requested_id = int(requested_id)
-            except ValueError:
-                requested_id = None
-    if requested_id is None:
-        candidate_id = request.data.get("candidate_id") or request.query_params.get("candidate_id")
-        if candidate_id:
-            try:
-                requested_id = int(str(candidate_id).replace("CAND-", ""))
-            except (ValueError, IndexError):
-                pass
-
-    req = Request.objects.filter(id=requested_id).first()
+    req = _resolve_coe_request(request, req_id)
     if not req:
         return Response({"detail": "Not found"}, status=404)
     if req.status != "Uploaded":
@@ -847,13 +845,17 @@ def COESelectCandidate(request, req_id=None):
         role=request.user.role,
         paper_id=None,
         s_code=req.s_code,
-        detail={"message": "candidate selected", "request_id": req.id},
+        detail={
+            "message": "candidate selected",
+            "request_id": req.id,
+            "anonymous_id": str(req.anonymous_id),
+        },
         severity="info",
     )
 
     # Phase 7: record selection event on-chain (anonymous reference only)
     try:
-        candidate_ref = f"CAND-{req.id}"
+        candidate_ref = str(req.anonymous_id)
         evt_tx = record_event(req.s_code, "selected", candidate_ref)
         logger.info("COESelectCandidate: lifecycle event recorded on-chain s_code=%s tx=%s", req.s_code, evt_tx)
     except BlockchainConnectionError as exc:
@@ -865,7 +867,7 @@ def COESelectCandidate(request, req_id=None):
 
     return Response({
         "message": "Candidate selected successfully",
-        "selected_request_id": req.id,
+        "anonymous_id": str(req.anonymous_id),
         "s_code": req.s_code,
     })
 
@@ -876,29 +878,7 @@ def COEFinalize(request, req_id=None):
     if request.user.role != "coe":
         return Response({"detail": "Only COE users can perform this action"}, status=403)
 
-    # Resolve anonymous candidate_id to internal Request ID
-    requested_id = req_id
-    if requested_id is not None:
-        cid_str = str(requested_id)
-        if cid_str.startswith("CAND-"):
-            try:
-                requested_id = int(cid_str.replace("CAND-", ""))
-            except ValueError:
-                requested_id = None
-        else:
-            try:
-                requested_id = int(requested_id)
-            except ValueError:
-                requested_id = None
-    if requested_id is None:
-        candidate_id = request.data.get("candidate_id") or request.query_params.get("candidate_id")
-        if candidate_id:
-            try:
-                requested_id = int(str(candidate_id).replace("CAND-", ""))
-            except (ValueError, IndexError):
-                pass
-
-    req = Request.objects.filter(id=requested_id).first()
+    req = _resolve_coe_request(request, req_id)
     if not req:
         return Response({"detail":"Not found"}, status=404)
     if req.status != "Uploaded":
@@ -906,7 +886,12 @@ def COEFinalize(request, req_id=None):
     if req.selection_status != "SELECTED":
         return Response({"detail": "Only the selected candidate can be finalized"}, status=400)
 
-    values = a_decryption([req.enc_field, req.private_key])
+    encrypted_fields = (
+        ast.literal_eval(req.enc_field)
+        if isinstance(req.enc_field, str)
+        else req.enc_field
+    )
+    values = a_decryption([encrypted_fields, req.private_key])
     key = values[0]
     cid = values[1].decode("utf-8")
     enc_bytes = get_file(cid)
@@ -945,7 +930,11 @@ def COEFinalize(request, req_id=None):
         role=request.user.role,
         paper_id=final.id,
         s_code=req.s_code,
-        detail={"message": "paper finalized", "request_id": req.id},
+        detail={
+            "message": "paper finalized",
+            "request_id": req.id,
+            "anonymous_id": str(req.anonymous_id),
+        },
         severity="info",
     )
 
@@ -960,7 +949,11 @@ def COEFinalize(request, req_id=None):
         _security_logger.error("COEFinalize: blockchain event error for s_code=%s: %s", req.s_code, exc)
         log_event(action="blockchain.event_error", actor=request.user.username, role=request.user.role, s_code=req.s_code, detail={"reason": str(exc)}, severity="error")
 
-    return Response({"message": "Finalized", "paper_id": final.id, "request_id": req.id})
+    return Response({
+        "message": "Finalized",
+        "paper_id": final.id,
+        "anonymous_id": str(req.anonymous_id),
+    })
 
 
 # -------- STUDENT DOWNLOAD (Phase 4.1) --------

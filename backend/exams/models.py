@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 import datetime
 import json
+import uuid
 
 def teacherID():
     t_id = 'TEA-1'
@@ -83,6 +84,12 @@ class CustomUser(AbstractUser):
 class Request(models.Model):
     tusername = models.CharField(max_length=40, default='None')
     s_code = models.CharField(max_length=7, default="None")
+    anonymous_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        db_index=True,
+        editable=False,
+    )
     syllabus = models.FileField(upload_to='syllabus/', null=True, blank=True)
     q_pattern = models.FileField(upload_to='q_patterns/', null=True, blank=True)
     deadline = models.DateField(default=datetime.date.today)

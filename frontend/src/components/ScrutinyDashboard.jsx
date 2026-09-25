@@ -252,7 +252,7 @@ export default function ScrutinyDashboard() {
                       Subject Code
                     </th>
                     <th className="border border-gray-300 p-2 text-left" scope="col">
-                      Teacher
+                      Anonymous ID
                     </th>
                     <th className="border border-gray-300 p-2 text-left" scope="col">
                       Questions
@@ -288,7 +288,7 @@ export default function ScrutinyDashboard() {
                           {result.request_info?.subject_code || "N/A"}
                         </td>
                         <td className="border border-gray-300 p-2">
-                          {result.request_info?.teacher_name || "N/A"}
+                          {result.request_info?.anonymous_id || "N/A"}
                         </td>
                         <td className="border border-gray-300 p-2">
                           {result.summary?.num_questions || 0}
@@ -353,8 +353,8 @@ export default function ScrutinyDashboard() {
                 <div>{selectedResult.request_info?.subject_code || "N/A"}</div>
               </div>
               <div>
-                <label className="font-semibold">Teacher:</label>
-                <div>{selectedResult.request_info?.teacher_name || "N/A"}</div>
+                <label className="font-semibold">Anonymous ID:</label>
+                <div>{selectedResult.request_info?.anonymous_id || "N/A"}</div>
               </div>
               <div>
                 <label className="font-semibold">Total Questions:</label>

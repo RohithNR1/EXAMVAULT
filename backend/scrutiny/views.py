@@ -1,5 +1,6 @@
 import logging
 import os
+import uuid
 
 from django.core.files import File
 from django.core.files.storage import default_storage
@@ -9,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from exams.models import SubjectCode
+from exams.models import Request, SubjectCode
 from .models import ScrutinyResult
 from .nlp_utils import analyze_file
 from .scrutiny_utils import get_scrutiny_summary_for_dashboard
@@ -47,6 +48,8 @@ class ScrutinyResultsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if request.user.role != "coe":
+            return Response({"detail": "Only COE users can access scrutiny results"}, status=status.HTTP_403_FORBIDDEN)
         try:
             # Get all scrutiny results with related request information
             results = ScrutinyResult.objects.select_related('request_obj').all().order_by('-created_at')
@@ -73,6 +76,8 @@ class ScrutinySummaryAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if request.user.role != "coe":
+            return Response({"detail": "Only COE users can access scrutiny summary"}, status=status.HTTP_403_FORBIDDEN)
         try:
             summary = get_scrutiny_summary_for_dashboard()
             return Response(summary, status=status.HTTP_200_OK)
@@ -90,18 +95,24 @@ class ScrutinyDetailAPIView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, request_id):
+    def get(self, request, anonymous_id):
+        if request.user.role != "coe":
+            return Response({"detail": "Only COE users can access scrutiny details"}, status=status.HTTP_403_FORBIDDEN)
         try:
-            scrutiny_result = get_object_or_404(ScrutinyResult, request_obj_id=request_id)
-            serializer = ScrutinyResultSerializer(scrutiny_result)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            logger.exception(f"Error retrieving scrutiny detail for request {request_id}: {e}")
-            return Response(
-                {"detail": "Failed to retrieve scrutiny details"}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            anonymous_uuid = uuid.UUID(str(anonymous_id))
+        except (TypeError, ValueError, AttributeError):
+            return Response({"detail": "Scrutiny result not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        request_obj = Request.objects.filter(anonymous_id=anonymous_uuid).first()
+        if not request_obj:
+            return Response({"detail": "Scrutiny result not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        scrutiny_result = ScrutinyResult.objects.filter(request_obj=request_obj).order_by("-created_at").first()
+        if not scrutiny_result:
+            return Response({"detail": "Scrutiny result not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ScrutinyResultSerializer(scrutiny_result)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class VTUSyncAPIView(APIView):

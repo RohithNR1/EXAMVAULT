@@ -1,7 +1,9 @@
 import inspect
 import time
+import uuid
 from unittest.mock import patch
 
+from django.db import IntegrityError
 from django.test import TestCase
 from django.utils import timezone
 from datetime import timedelta
@@ -11,6 +13,28 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from exams.models import CustomUser, FinalPapers, Request
 from exams.views_api import StudentFinalPapers, StudentMe
+
+
+class AnonymousIdModelTests(TestCase):
+    def test_request_generates_opaque_unique_anonymous_id(self):
+        first = Request.objects.create(tusername="teacher_one", s_code="ANON01")
+        second = Request.objects.create(tusername="teacher_two", s_code="ANON01")
+
+        self.assertIsNotNone(first.anonymous_id)
+        self.assertIsNotNone(second.anonymous_id)
+        self.assertNotEqual(first.anonymous_id, second.anonymous_id)
+        self.assertIsInstance(first.anonymous_id, uuid.UUID)
+        self.assertNotIn("teacher_one", str(first.anonymous_id))
+
+    def test_request_anonymous_id_is_unique(self):
+        request = Request.objects.create(tusername="teacher_one", s_code="ANON02")
+
+        with self.assertRaises(IntegrityError):
+            Request.objects.create(
+                tusername="teacher_two",
+                s_code="ANON02",
+                anonymous_id=request.anonymous_id,
+            )
 
 
 class StudentAccessWindowTests(TestCase):
@@ -1058,9 +1082,10 @@ class AuditLoggingTests(TestCase):
             selection_status="PENDING",
         )
 
-        request = self.factory.post(f"/api/coe/select-candidate/{req.id}/")
+        anonymous_id = str(req.anonymous_id)
+        request = self.factory.post(f"/api/coe/select-candidate/{anonymous_id}/")
         force_authenticate(request, user=coe)
-        response = COESelectCandidate(request, req_id=req.id)
+        response = COESelectCandidate(request, req_id=anonymous_id)
         self.assertEqual(response.status_code, 200)
         log = self.AuditLog.objects.get(action="paper.selected")
         self.assertEqual(log.actor_username, "coe2")
@@ -1099,9 +1124,12 @@ class AuditLoggingTests(TestCase):
             "access_start": "2025-12-01T09:00:00Z",
             "access_end": "2025-12-01T12:00:00Z",
         }
-        request = self.factory.post(f"/api/coe/finalize/{req.id}/", payload, format="json")
+        anonymous_id = str(req.anonymous_id)
+        request = self.factory.post(
+            f"/api/coe/finalize/{anonymous_id}/", payload, format="json"
+        )
         force_authenticate(request, user=coe)
-        response = COEFinalize(request, req_id=req.id)
+        response = COEFinalize(request, req_id=anonymous_id)
         self.assertEqual(response.status_code, 200)
         log = self.AuditLog.objects.get(action="paper.finalized")
         self.assertEqual(log.actor_username, "coe3")
@@ -1164,16 +1192,15 @@ class AuditLoggingTests(TestCase):
         response = COECandidates(request)
         self.assertEqual(response.status_code, 200)
         data = response.data
-        self.assertIn("candidate_id", data[0])
-        self.assertNotIn("teacher_username", data[0])
-        self.assertNotIn("teacher_name", data[0])
-        self.assertNotIn("tusername", data[0])
-        self.assertNotIn("teacher_first_name", data[0])
-        self.assertNotIn("teacher_last_name", data[0])
-        self.assertEqual(data[0]["candidate_id"], f"CAND-{req.id:04d}")
+        self.assertEqual(data[0]["anonymous_id"], str(req.anonymous_id))
+        for field in (
+            "id", "candidate_id", "tusername", "teacher_first_name",
+            "teacher_last_name", "teacher_id",
+        ):
+            self.assertNotIn(field, data[0])
 
     def test_coe_list_requests_is_anonymous(self):
-        """COEListRequests must expose candidate_id, not teacher identity."""
+        """COEListRequests exposes only opaque request identity and workflow fields."""
         from exams.views_api import COEListRequests
         from exams.models import SubjectCode
         coe = CustomUser.objects.create_user(username="coe_b", password="secret123", role="coe")
@@ -1189,24 +1216,79 @@ class AuditLoggingTests(TestCase):
         self.assertIsInstance(view, DRFResponse)
         self.assertEqual(view.status_code, 200)
         data = view.data
-        self.assertIn("candidate_id", data[0])
-        self.assertNotIn("tusername", data[0])
-        self.assertNotIn("teacher_first_name", data[0])
-        self.assertNotIn("teacher_last_name", data[0])
+        self.assertEqual(data[0]["anonymous_id"], str(req.anonymous_id))
+        for field in (
+            "id", "candidate_id", "tusername", "teacher_first_name",
+            "teacher_last_name", "teacher_id",
+        ):
+            self.assertNotIn(field, data[0])
 
-    def test_coe_select_via_candidate_id(self):
-        """COESelectCandidate must accept candidate_id and resolve it internally."""
+    def test_coe_select_via_anonymous_id(self):
+        """COESelectCandidate resolves the opaque ID to the correct Request."""
         from exams.views_api import COESelectCandidate
         coe = CustomUser.objects.create_user(username="coe_c", password="secret123", role="coe")
         req = Request.objects.create(tusername="teacher_anon3", s_code="ANON03", status="Uploaded", selection_status="PENDING", total_marks=100)
-        candidate_id = f"CAND-{req.id:04d}"
-        request = self.factory.post(f"/api/coe/select-candidate/{candidate_id}/")
+        anonymous_id = str(req.anonymous_id)
+        request = self.factory.post(f"/api/coe/select-candidate/{anonymous_id}/")
         force_authenticate(request, user=coe)
-        response = COESelectCandidate(request, req_id=candidate_id)
+        response = COESelectCandidate(request, req_id=anonymous_id)
         self.assertEqual(response.status_code, 200)
         # Verify selection actually happened
         req.refresh_from_db()
         self.assertEqual(req.selection_status, "SELECTED")
+
+    def test_coe_select_rejects_internal_request_id(self):
+        """COE selection must not resolve the internal numeric Request ID."""
+        from exams.views_api import COESelectCandidate
+        coe = CustomUser.objects.create_user(username="coe_internal_id", password="testpass123", role="coe")
+        req = Request.objects.create(
+            tusername="teacher_internal_id", s_code="ANONID", status="Uploaded",
+            selection_status="PENDING", total_marks=100,
+        )
+        request = self.factory.post(f"/api/coe/select-candidate/{req.id}/")
+        force_authenticate(request, user=coe)
+        response = COESelectCandidate(request, req_id=str(req.id))
+        self.assertEqual(response.status_code, 404)
+        request = self.factory.post("/api/coe/select-candidate/CAND-0004/")
+        force_authenticate(request, user=coe)
+        response = COESelectCandidate(request, req_id="CAND-0004")
+        self.assertEqual(response.status_code, 404)
+
+    def test_coe_select_rejects_invalid_anonymous_id(self):
+        """Malformed or unknown anonymous IDs are rejected safely."""
+        from exams.views_api import COESelectCandidate
+        coe = CustomUser.objects.create_user(username="coe_bad_anonymous", password="testpass123", role="coe")
+        request = self.factory.post("/api/coe/select-candidate/not-a-uuid/")
+        force_authenticate(request, user=coe)
+        response = COESelectCandidate(request, req_id="not-a-uuid")
+        self.assertEqual(response.status_code, 404)
+        request = self.factory.post(f"/api/coe/select-candidate/{uuid.uuid4()}/")
+        force_authenticate(request, user=coe)
+        response = COESelectCandidate(request, req_id=str(uuid.uuid4()))
+        self.assertEqual(response.status_code, 404)
+
+    def test_coe_select_marks_competing_uploaded_requests_not_selected(self):
+        """Selecting one anonymous candidate deselects other uploaded candidates."""
+        from exams.views_api import COESelectCandidate
+        coe = CustomUser.objects.create_user(username="coe_competing", password="testpass123", role="coe")
+        first = Request.objects.create(
+            tusername="teacher_competing_1", s_code="COMP01", status="Uploaded",
+            selection_status="PENDING", total_marks=100,
+        )
+        second = Request.objects.create(
+            tusername="teacher_competing_2", s_code="COMP01", status="Uploaded",
+            selection_status="SELECTED", total_marks=100,
+        )
+        request = self.factory.post(
+            f"/api/coe/select-candidate/{first.anonymous_id}/"
+        )
+        force_authenticate(request, user=coe)
+        response = COESelectCandidate(request, req_id=str(first.anonymous_id))
+        self.assertEqual(response.status_code, 200)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.selection_status, "SELECTED")
+        self.assertEqual(second.selection_status, "NOT_SELECTED")
 
     def test_coe_candidates_no_teacher_identity_in_response(self):
         """Every candidate entry must not contain any teacher-identifying field."""
@@ -1279,7 +1361,7 @@ class AuditLoggingTests(TestCase):
         force_authenticate(request, user=coe)
         view = COEListRequests.as_view()(request)
         self.assertEqual(view.status_code, 200)
-        self.assertIn("candidate_id", view.data[0])
+        self.assertEqual(view.data[0]["anonymous_id"], str(req.anonymous_id))
 
     def test_non_coe_cannot_add_teacher(self):
         """Only COE users may POST to /api/coe/requests/add/. Non-COE must get 403."""
@@ -1326,28 +1408,88 @@ class AuditLoggingTests(TestCase):
         response = COECandidates(request)
         self.assertEqual(response.status_code, 200)
         for entry in response.data:
-            cid = entry.get("candidate_id", "")
-            # candidate_id should only contain numeric part, no hint of teacher username
-            self.assertNotIn("teacher_leaktest", cid)
-            self.assertNotIn(str(teacher.id), cid)
-            # The numeric portion should not directly reveal user info
-            numeric_part = cid.replace("CAND-", "")
-            self.assertNotEqual(numeric_part, str(teacher.id), "candidate_id equals teacher user ID")
+            self.assertEqual(entry["anonymous_id"], str(req.anonymous_id))
+            self.assertNotIn("teacher_leaktest", entry["anonymous_id"])
+            self.assertNotIn(str(teacher.id), entry["anonymous_id"])
 
     def test_paper_selected_audit_preserved_after_anonymization(self):
         """The paper.selected audit event must still be created after anonymization changes."""
         from exams.views_api import COESelectCandidate
         coe = CustomUser.objects.create_user(username="coe_f", password="secret123", role="coe")
         req = Request.objects.create(tusername="teacher_audit", s_code="AUDIT01", status="Uploaded", selection_status="PENDING", total_marks=100)
-        candidate_id = f"CAND-{req.id:04d}"
-        request = self.factory.post(f"/api/coe/select-candidate/{candidate_id}/")
+        anonymous_id = str(req.anonymous_id)
+        request = self.factory.post(f"/api/coe/select-candidate/{anonymous_id}/")
         force_authenticate(request, user=coe)
-        response = COESelectCandidate(request, req_id=candidate_id)
+        response = COESelectCandidate(request, req_id=anonymous_id)
         self.assertEqual(response.status_code, 200)
         log = self.AuditLog.objects.get(action="paper.selected")
         self.assertEqual(log.actor_username, "coe_f")
         self.assertEqual(log.actor_role, "coe")
         self.assertEqual(log.severity, "info")
+        self.assertIn(str(req.id), log.detail)
+        self.assertIn(str(req.anonymous_id), log.detail)
+
+    def test_selection_blockchain_reference_uses_anonymous_id(self):
+        """Selection events must use the opaque ID rather than CAND/request IDs."""
+        from exams.views_api import COESelectCandidate
+        coe = CustomUser.objects.create_user(username="coe_chain_ref", password="testpass123", role="coe")
+        req = Request.objects.create(
+            tusername="teacher_chain_ref", s_code="CHAIN01",
+            status="Uploaded", selection_status="PENDING", total_marks=100,
+        )
+        request = self.factory.post(f"/api/coe/select-candidate/{req.anonymous_id}/")
+        force_authenticate(request, user=coe)
+        with patch("exams.views_api.record_event", return_value="tx") as record_event:
+            response = COESelectCandidate(request, req_id=str(req.anonymous_id))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(record_event.call_args.args[2], str(req.anonymous_id))
+
+    def test_scrutiny_detail_is_anonymous_and_coe_only(self):
+        """Scrutiny detail resolves by UUID and omits teacher/request identity."""
+        from scrutiny.models import ScrutinyResult
+        from scrutiny.views import ScrutinyDetailAPIView
+        req = Request.objects.create(
+            tusername="teacher_scrutiny", s_code="SCR01",
+            status="Uploaded", total_marks=100,
+        )
+        ScrutinyResult.objects.create(
+            request_obj=req,
+            summary={"overall_score": 0.8, "num_questions": 10},
+        )
+        coe = CustomUser.objects.create_user(username="coe_scrutiny", password="testpass123", role="coe")
+        request = self.factory.get(f"/api/scrutiny/detail/{req.anonymous_id}/")
+        force_authenticate(request, user=coe)
+        response = ScrutinyDetailAPIView.as_view()(
+            request, anonymous_id=str(req.anonymous_id)
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["request_info"]["anonymous_id"], str(req.anonymous_id))
+        for field in ("request_obj", "teacher_name", "tusername", "teacher_id"):
+            self.assertNotIn(field, response.data)
+            self.assertNotIn(field, response.data["request_info"])
+
+    def test_scrutiny_detail_rejects_unknown_or_malformed_anonymous_id(self):
+        """Scrutiny detail returns 404 without leaking internal identifiers."""
+        from scrutiny.views import ScrutinyDetailAPIView
+        coe = CustomUser.objects.create_user(username="coe_scrutiny_bad", password="testpass123", role="coe")
+        for anonymous_id in ("not-a-uuid", str(uuid.uuid4())):
+            request = self.factory.get(f"/api/scrutiny/detail/{anonymous_id}/")
+            force_authenticate(request, user=coe)
+            response = ScrutinyDetailAPIView.as_view()(request, anonymous_id=anonymous_id)
+            self.assertEqual(response.status_code, 404)
+            self.assertNotIn("teacher", str(response.data).lower())
+
+    def test_non_coe_cannot_access_scrutiny_detail(self):
+        """Scrutiny detail remains restricted to COE users."""
+        from scrutiny.views import ScrutinyDetailAPIView
+        teacher = CustomUser.objects.create_user(
+            username="teacher_scrutiny_forbidden", password="testpass123", role="teacher"
+        )
+        anonymous_id = str(uuid.uuid4())
+        request = self.factory.get(f"/api/scrutiny/detail/{anonymous_id}/")
+        force_authenticate(request, user=teacher)
+        response = ScrutinyDetailAPIView.as_view()(request, anonymous_id=anonymous_id)
+        self.assertEqual(response.status_code, 403)
 
     def test_finalize_works_with_anonymous_selection(self):
         """COEFinalize must still resolve the selected candidate correctly after anonymization."""
@@ -1365,11 +1507,11 @@ class AuditLoggingTests(TestCase):
             mock_dec.return_value = [b"mock-fernet-key\x00\x00\x00\x00\x00\x00\x00\x00", b"QmMockFin"]
             mock_get.return_value = b"%PDF-1.4 final mock"
             mock_wrap.return_value = (b"iv123", b"ct123")
-            candidate_id = f"CAND-{req.id:04d}"
+            anonymous_id = str(req.anonymous_id)
             payload = {"exam_datetime": "2025-12-01T10:00:00Z", "access_start": "2025-12-01T09:00:00Z", "access_end": "2025-12-01T12:00:00Z"}
-            request = self.factory.post(f"/api/coe/finalize/{candidate_id}/", payload, format="json")
+            request = self.factory.post(f"/api/coe/finalize/{anonymous_id}/", payload, format="json")
             force_authenticate(request, user=coe)
-            response = COEFinalize(request, req_id=candidate_id)
+            response = COEFinalize(request, req_id=anonymous_id)
             self.assertEqual(response.status_code, 200)
         # Verify FinalPapers was created
         fp = FinalPapers.objects.filter(s_code="FIN01").first()
@@ -1377,6 +1519,23 @@ class AuditLoggingTests(TestCase):
         # Verify request is now finalized
         req.refresh_from_db()
         self.assertEqual(req.status, "Finalized")
+
+    def test_finalize_rejects_invalid_anonymous_id(self):
+        """COEFinalize rejects malformed or unknown opaque IDs safely."""
+        from exams.views_api import COEFinalize
+        coe = CustomUser.objects.create_user(username="coe_bad_finalize", password="testpass123", role="coe")
+        request = self.factory.post("/api/coe/finalize/not-a-uuid/", {}, format="json")
+        force_authenticate(request, user=coe)
+        response = COEFinalize(request, req_id="not-a-uuid")
+        self.assertEqual(response.status_code, 404)
+        request = self.factory.post(f"/api/coe/finalize/{uuid.uuid4()}/", {}, format="json")
+        force_authenticate(request, user=coe)
+        response = COEFinalize(request, req_id=str(uuid.uuid4()))
+        self.assertEqual(response.status_code, 404)
+        request = self.factory.post("/api/coe/finalize/CAND-0004/", {}, format="json")
+        force_authenticate(request, user=coe)
+        response = COEFinalize(request, req_id="CAND-0004")
+        self.assertEqual(response.status_code, 404)
 
 
 class TimeLockedAccessTests(TestCase):
@@ -1803,8 +1962,9 @@ class BlockchainAuditTrailTests(TestCase):
             selection_status="PENDING",
         )
 
+        anonymous_id = str(req.anonymous_id)
         request = self.factory.post(
-            f"/api/coe/select/{req.id}/"
+            f"/api/coe/select/{anonymous_id}/"
         )
 
         force_authenticate(
@@ -1818,7 +1978,7 @@ class BlockchainAuditTrailTests(TestCase):
         ):
             response = COESelectCandidate(
                 request,
-                req_id=req.id,
+                req_id=anonymous_id,
             )
 
         self.assertEqual(response.status_code, 200)
@@ -1866,8 +2026,9 @@ class BlockchainAuditTrailTests(TestCase):
             "exams.views_api.record_event",
             side_effect=BlockchainConnectionError("RPC down"),
         ):
+            anonymous_id = str(req.anonymous_id)
             request = self.factory.post(
-                f"/api/coe/finalize/{req.id}/"
+                f"/api/coe/finalize/{anonymous_id}/"
             )
 
             force_authenticate(
@@ -1877,7 +2038,7 @@ class BlockchainAuditTrailTests(TestCase):
 
             response = COEFinalize(
                 request,
-                req_id=req.id,
+                req_id=anonymous_id,
             )
 
         self.assertEqual(response.status_code, 200)

@@ -27,10 +27,10 @@ urlpatterns = [
     path("coe/requests/add/", v.COEAddTeacher),                  # create request (uses subject defaults if files not sent)
     path("coe/candidates/", v.COECandidates),                    # GET ?s_code=...
     path(
-        "coe/requests/<int:req_id>/select/",
+        "coe/requests/<str:req_id>/select/",
         v.COESelectCandidate,
     ),
-    path("coe/requests/<int:req_id>/finalize/", v.COEFinalize),  # finalize chosen candidate
+    path("coe/requests/<str:req_id>/finalize/", v.COEFinalize),  # finalize chosen candidate
 
     path("sup/final-papers/", v.SuperintendentListFinal.as_view()),
     path("sup/final-papers/<int:paper_id>/decrypt-info/", v.SuperintendentGetDecryptInfo),

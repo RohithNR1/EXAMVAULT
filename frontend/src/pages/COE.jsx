@@ -6,6 +6,7 @@ import {
   coeCreateRequest,
   coeListRequests,
   coeGetCandidates,
+  coeSelectCandidate,
   coeFinalize,
 } from "../api/auth";
 import {
@@ -29,7 +30,6 @@ export default function COE() {
 
   const [teachers, setTeachers] = useState([]);
   const [scode, setScode] = useState("");
-  const [uploadedRequestIds, setUploadedRequestIds] = useState([]);
 
   const [defaultSyllabusUrl, setDefaultSyllabusUrl] = useState(null);
   const [defaultQPatternUrl, setDefaultQPatternUrl] = useState(null);
@@ -41,7 +41,7 @@ export default function COE() {
 
   const [isFinalizeModalOpen, setFinalizeModalOpen] = useState(false);
   const [candidatePapers, setCandidatePapers] = useState([]);
-  const [selectedCandidateId, setSelectedCandidateId] = useState(null);
+  const [selectedAnonymousId, setSelectedAnonymousId] = useState(null);
 
   const [requests, setRequests] = useState([]);
   const [activeTab, setActiveTab] = useState("requests");
@@ -79,7 +79,6 @@ export default function COE() {
       const { data } = await coeGetTeachers(payload);
       setTeachers(data.teachers || []);
       setScode(data.s_code || "");
-      setUploadedRequestIds((data.uploaded_request_ids || []).map((x) => x.id));
       setDefaultSyllabusUrl(data.default_syllabus_url || null);
       setDefaultQPatternUrl(data.default_q_pattern_url || null);
     } catch (err) {
@@ -132,11 +131,13 @@ export default function COE() {
   };
 
   const handleOpenFinalize = async () => {
+    const uploadedRequest = requests.find((r) => r.status === "Uploaded");
+    const scode = uploadedRequest?.s_code;
     if (!scode) return toast("warning", null, "Submit subject first");
     try {
       const { data } = await coeGetCandidates(scode);
       setCandidatePapers(data || []);
-      setSelectedCandidateId(null);
+      setSelectedAnonymousId(null);
       setFinalizeModalOpen(true);
     } catch (err) {
       console.error(err);
@@ -145,13 +146,14 @@ export default function COE() {
   };
 
   const handleFinalizePaper = async () => {
-    if (!selectedCandidateId) return toast("warning", null, "Select a paper");
+    if (!selectedAnonymousId) return toast("warning", null, "Select a paper");
     try {
-      await coeFinalize(selectedCandidateId);
+      await coeSelectCandidate(selectedAnonymousId);
+      await coeFinalize(selectedAnonymousId);
       toast("success", null, "Paper finalized successfully");
       setFinalizeModalOpen(false);
       setCandidatePapers([]);
-      setSelectedCandidateId(null);
+      setSelectedAnonymousId(null);
       await loadRequests();
       await handleSubmitSearch();
     } catch (err) {
@@ -268,8 +270,8 @@ export default function COE() {
                   <Button
                     variant="secondary"
                     size="sm"
-                    disabled={uploadedRequestIds.length === 0}
-                    onClick={() => uploadedRequestIds.length > 0 && handleOpenFinalize()}
+                    disabled={!requests.some((r) => r.status === "Uploaded")}
+                    onClick={() => handleOpenFinalize()}
                   >
                     Finalize
                   </Button>
@@ -349,11 +351,11 @@ export default function COE() {
                       <div className="mt-2 space-y-1.5">
                         {grouped[s_code].map((r) => (
                           <div
-                            key={r.id}
+                            key={r.anonymous_id}
                             className="flex justify-between items-center rounded-lg bg-surface px-3 py-2 border border-neutral-100"
                           >
                             <div className="text-sm text-neutral-700 truncate max-w-[60%]">
-                              {r.teacher_first_name} {r.teacher_last_name} ({r.tusername})
+                              Anonymous paper ({r.anonymous_id})
                             </div>
                             <Badge variant="neutral">{r.status}</Badge>
                           </div>
@@ -455,7 +457,7 @@ export default function COE() {
             <Button variant="ghost" onClick={() => setFinalizeModalOpen(false)}>Cancel</Button>
             <Button
               variant="success"
-              disabled={!selectedCandidateId}
+              disabled={!selectedAnonymousId}
               onClick={handleFinalizePaper}
             >
               Finalize Paper
@@ -467,57 +469,60 @@ export default function COE() {
           {candidatePapers.length === 0 ? (
             <p className="text-sm text-neutral-500">No uploaded papers</p>
           ) : (
-            candidatePapers.map((mp) => (
-              <div
-                key={mp.id}
-                className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
-                  selectedCandidateId === mp.id
-                    ? "border-primary-500 bg-primary-50"
-                    : "border-neutral-200 bg-surface hover:bg-neutral-50"
-                }`}
-                onClick={() => setSelectedCandidateId(mp.id)}
-                role="radio"
-                aria-checked={selectedCandidateId === mp.id}
-                tabIndex={0}
-                aria-label={`Paper ${mp.paper_number}${mp.scrutiny ? `, score ${mp.scrutiny.score_percent}% (${mp.scrutiny.quality})` : ', no scrutiny results yet'}`}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedCandidateId(mp.id); }}
-              >
-                <input
-                  type="radio"
-                  name="candidate"
-                  value={mp.id}
-                  checked={selectedCandidateId === mp.id}
-                  onChange={() => setSelectedCandidateId(mp.id)}
-                  className="mt-1 accent-primary-600"
-                  onClick={(e) => e.stopPropagation()}
-                />
-                <div className="flex-1 space-y-1 text-sm">
-                  <div className="font-semibold text-neutral-800">{mp.paper_number}</div>
-                  {mp.scrutiny ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="info">
-                        Score: <b>{mp.scrutiny.score_percent}%</b> ({mp.scrutiny.quality})
-                      </Badge>
-                      <Badge
-                        variant={mp.scrutiny.plagiarism_percent > 30 ? "danger" : "success"}
-                      >
-                        Plagiarism: {mp.scrutiny.plagiarism_percent}%
-                      </Badge>
-                      <span className="text-xs text-neutral-500">
-                        Scrutinized on{" "}
-                        {mp.scrutiny.created_at
-                          ? new Date(mp.scrutiny.created_at).toLocaleString()
-                          : "N/A"}
-                      </span>
-                    </div>
-                  ) : (
-                    <p className="text-neutral-500 italic text-xs">
-                      Scrutiny results not available yet.
-                    </p>
-                  )}
+            candidatePapers.map((mp) => {
+              const anonymousId = mp.anonymous_id;
+              return (
+                <div
+                  key={anonymousId}
+                  className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
+                    selectedAnonymousId === anonymousId
+                      ? "border-primary-500 bg-primary-50"
+                      : "border-neutral-200 bg-surface hover:bg-neutral-50"
+                  }`}
+                  onClick={() => setSelectedAnonymousId(anonymousId)}
+                  role="radio"
+                  aria-checked={selectedAnonymousId === anonymousId}
+                  tabIndex={0}
+                  aria-label={`Paper ${mp.paper_number}${mp.scrutiny ? `, score ${mp.scrutiny.score_percent}% (${mp.scrutiny.quality})` : ', no scrutiny results yet'}`}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedAnonymousId(anonymousId); }}
+                >
+                  <input
+                    type="radio"
+                    name="candidate"
+                    value={anonymousId}
+                    checked={selectedAnonymousId === anonymousId}
+                    onChange={() => setSelectedAnonymousId(anonymousId)}
+                    className="mt-1 accent-primary-600"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <div className="flex-1 space-y-1 text-sm">
+                    <div className="font-semibold text-neutral-800">{mp.paper_number}</div>
+                    {mp.scrutiny ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="info">
+                          Score: <b>{mp.scrutiny.score_percent}%</b> ({mp.scrutiny.quality})
+                        </Badge>
+                        <Badge
+                          variant={mp.scrutiny.plagiarism_percent > 30 ? "danger" : "success"}
+                        >
+                          Plagiarism: {mp.scrutiny.plagiarism_percent}%
+                        </Badge>
+                        <span className="text-xs text-neutral-500">
+                          Scrutinized on{" "}
+                          {mp.scrutiny.created_at
+                            ? new Date(mp.scrutiny.created_at).toLocaleString()
+                            : "N/A"}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="text-neutral-500 italic text-xs">
+                        Scrutiny results not available yet.
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </Modal>
