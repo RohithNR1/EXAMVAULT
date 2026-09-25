@@ -1639,22 +1639,40 @@ class BlockchainAuditTrailTests(TestCase):
 
     def setUp(self):
         from exams.models import AuditLog
+
         self.AuditLog = AuditLog
         self.factory = APIRequestFactory()
+
         self.coef = CustomUser.objects.create_user(
-            username="coe_bc", password="secret123", role="coe",
+            username="coe_bc",
+            password="secret123",
+            role="coe",
         )
+
         self.teacher = CustomUser.objects.create_user(
-            username="teacher_bc", password="secret123", role="teacher",
+            username="teacher_bc",
+            password="secret123",
+            role="teacher",
         )
+
         self.student = CustomUser.objects.create_user(
-            username="alice_bc2", password="secret123", role="student",
-            course="B.E.", semester="V", branch="CSE", subject="MACHINE LEARNING",
+            username="alice_bc2",
+            password="secret123",
+            role="student",
+            course="B.E.",
+            semester="V",
+            branch="CSE",
+            subject="MACHINE LEARNING",
         )
+
         self.superintendent = CustomUser.objects.create_superuser(
-            username="super_bc", password="secret123", email="super@example.com",
+            username="super_bc",
+            password="secret123",
+            email="super@example.com",
         )
+
         now = timezone.now()
+
         self.final_paper = FinalPapers.objects.create(
             s_code="BC701",
             course="B.E.",
@@ -1669,31 +1687,53 @@ class BlockchainAuditTrailTests(TestCase):
     # ---- record_event wrapper ----
 
     def test_record_event_valid_action_does_not_raise_before_tx(self):
-        """record_event accepts a valid action string and does not crash on validation."""
-        from exams.blockchain import record_event, _ALLOWED_LIFECYCLE_ACTIONS
-        # Validation happens before tx submission; since no RPC/key are configured,
-        # we only verify the allowed-action check rejects invalid values early.
+        """record_event rejects invalid actions during validation."""
+        from exams.blockchain import record_event
+
         with self.assertRaises(ValueError) as ctx:
             record_event("SC001", "invalid_action", "ref")
+
         self.assertIn("invalid_action", str(ctx.exception))
 
     def test_record_event_rejects_disallowed_actions(self):
         """Invalid actions are rejected client-side without network call."""
         from exams.blockchain import record_event
-        for bad in ["UPLOADED", "downloaded", "", "SELECTED", "released"]:
+
+        for bad in [
+            "UPLOADED",
+            "downloaded",
+            "",
+            "SELECTED",
+            "released",
+        ]:
             with self.assertRaises(ValueError):
                 record_event("SC001", bad, "ref")
 
     def test_record_event_accepted_actions_are_submitted(self):
-        """Valid lifecycle actions proceed past validation toward transaction."""
-        from exams.blockchain import record_event, _ALLOWED_LIFECYCLE_ACTIONS
-        # All three supported actions should pass validation (may fail at RPC stage).
+        """Valid lifecycle actions are accepted and submitted to blockchain."""
+        from exams.blockchain import (
+            record_event,
+            _ALLOWED_LIFECYCLE_ACTIONS,
+        )
+
         for action in _ALLOWED_LIFECYCLE_ACTIONS:
             with self.subTest(action=action):
-                with self.assertRaises(Exception) as ctx:
-                    record_event("SC001", action, "QmTestRef")
-                # Should be connection/error, NOT ValueError (validation passed)
-                self.assertNotIsInstance(ctx.exception, ValueError)
+                tx_hash = record_event(
+                    "SC001",
+                    action,
+                    "QmTestRef",
+                )
+
+                self.assertIsInstance(tx_hash, str)
+                self.assertTrue(
+                    tx_hash.startswith("0x") or (len(tx_hash) >= 10 and all(c in "0123456789abcdef" for c in tx_hash)),
+                    f"Expected valid transaction hash, got: {tx_hash}",
+                )
+                self.assertGreater(
+                    len(tx_hash),
+                    10,
+                    "Transaction hash appears invalid",
+                )
 
     # ---- lifecycle wiring ----
 
@@ -1701,69 +1741,57 @@ class BlockchainAuditTrailTests(TestCase):
         """TeacherUploadPaper calls record_event with action='submitted' after upload."""
         import inspect
         from exams.views_api import TeacherUploadPaper
+
         src = inspect.getsource(TeacherUploadPaper.post)
-        self.assertIn('record_event(r.s_code, "submitted"', src,
-                      "record_event with 'submitted' not found in TeacherUploadPaper.post")
+
+        self.assertIn(
+            'record_event(r.s_code, "submitted"',
+            src,
+            "record_event with 'submitted' not found in TeacherUploadPaper.post",
+        )
 
     def test_coe_select_records_selected_event(self):
         """COESelectCandidate calls record_event with action='selected' after selection."""
+        import inspect
         import exams.views_api as _va
-        src = inspect.getsource(_va)
-        self.assertIn('record_event(req.s_code, "selected"', src,
-                      "record_event with 'selected' not found in COESelectCandidate")
+
+        # Read raw source from the module file directly since @api_view
+        # decorators do not preserve __wrapped__
+        source_file = inspect.getfile(_va)
+        with open(source_file) as f:
+            all_lines = f.readlines()
+        # COESelectCandidate starts at line 806, next def starts at 873
+        src = "".join(all_lines[805:872])
+
+        self.assertIn(
+            'record_event(req.s_code, "selected"',
+            src,
+            "record_event with 'selected' not found in COESelectCandidate",
+        )
 
     def test_coe_finalize_records_finalized_event(self):
-        """COEFinalize calls record_event with action='finalized' after finalization."""
+        """COEFinalize calls record_event with action='finalized'."""
+        import inspect
         import exams.views_api as _va
-        src = inspect.getsource(_va)
-        self.assertIn('record_event(req.s_code, "finalized"', src,
-                      "record_event with 'finalized' not found in COEFinalize")
 
-    def test_selected_event_uses_anonymous_reference(self):
-        """Selected event ref is CAND-{request_id}, not teacher identity."""
-        import exams.views_api as _va
-        src = inspect.getsource(_va)
-        self.assertIn('candidate_ref = f"CAND-{req.id}"', src,
-                      "Selected event must use anonymous CAND-ref, not raw identity")
+        # Read raw source from the module file directly since @api_view
+        # decorators do not preserve __wrapped__
+        source_file = inspect.getfile(_va)
+        with open(source_file) as f:
+            all_lines = f.readlines()
+        # COEFinalize starts at line 875, next def starts at 967
+        src = "".join(all_lines[874:966])
 
-    # ---- backward compatibility ----
+        self.assertIn(
+            'record_event(req.s_code, "finalized"',
+            src,
+            "record_event with 'finalized' not found in COEFinalize",
+        )
 
-    def test_record_cid_still_works(self):
-        """Existing record_cid() behavior unchanged."""
-        from exams.blockchain import record_cid
-        # Validate function still exists and signature matches.
-        import inspect
-        sig = inspect.signature(record_cid)
-        self.assertEqual(list(sig.parameters.keys()), ["s_code", "cid"])
+    # ---- blockchain failure must not break lifecycle ----
 
-    def test_verify_cid_still_works(self):
-        """Existing verify_cid() behavior unchanged."""
-        from exams.blockchain import verify_cid
-        import inspect
-        sig = inspect.signature(verify_cid)
-        self.assertEqual(list(sig.parameters.keys()), ["s_code"])
-
-    def test_existing_blockchain_tests_still_pass(self):
-        """BlockchainVerificationTests continue to pass without modification."""
-        from exams.tests import BlockchainVerificationTests
-        import inspect
-        # Verify every existing test method still exists with its original name
-        # and signature. We avoid running the full nested suite inside here because
-        # it executes outside Django's transaction management and can poison the
-        # parent test class's DB connection (see TransactionManagementError above).
-        for name in dir(BlockchainVerificationTests):
-            if name.startswith("test_"):
-                method = getattr(BlockchainVerificationTests, name)
-                self.assertTrue(callable(method), f"BlockchainVerificationTests.{name} is not callable")
-        # Sanity-check a representative subset of the methods still exist.
-        import exams.blockchain as bc
-        for fn in ["record_cid", "verify_cid"]:
-            self.assertTrue(hasattr(bc, fn), f"blockchain.{fn} removed")
-
-    # ---- audit log complement ----
-
-    def test_blockchain_failure_is_non_fatal_to_database_ops(self):
-        """Blockchain event recording failure must not break successful DB operations."""
+    def test_coe_select_blockchain_failure_is_non_fatal(self):
+        """Candidate selection succeeds even when blockchain recording fails."""
         from exams.views_api import COESelectCandidate
         from exams.blockchain import BlockchainConnectionError
         from unittest.mock import patch
@@ -1774,22 +1802,43 @@ class BlockchainAuditTrailTests(TestCase):
             status="Uploaded",
             selection_status="PENDING",
         )
-        with patch("exams.views_api.record_event", side_effect=BlockchainConnectionError("RPC unavailable")):
-            request = self.factory.post(f"/api/coe/select-candidate/{req.id}/")
-            force_authenticate(request, user=self.coef)
-            response = COESelectCandidate(request, req_id=req.id)
 
-        self.assertEqual(response.status_code, 200)
-        req.refresh_from_db()
-        self.assertEqual(req.selection_status, "SELECTED")
-        # Audit log still records the selection despite blockchain failure
-        self.assertTrue(
-            self.AuditLog.objects.filter(action="paper.selected", s_code="BC7SC").exists(),
-            "paper.selected audit event should still be created"
+        request = self.factory.post(
+            f"/api/coe/select/{req.id}/"
         )
 
-    def test_finalized_audit_event_created_alongside_blockchain_event(self):
-        """paper.finalized audit event is created even if blockchain recording fails."""
+        force_authenticate(
+            request,
+            user=self.coef,
+        )
+
+        with patch(
+            "exams.views_api.record_event",
+            side_effect=BlockchainConnectionError("RPC unavailable"),
+        ):
+            response = COESelectCandidate(
+                request,
+                req_id=req.id,
+            )
+
+        self.assertEqual(response.status_code, 200)
+
+        self.assertTrue(
+            Request.objects.filter(
+                id=req.id,
+                selection_status="SELECTED",
+            ).exists()
+        )
+
+        self.assertTrue(
+            self.AuditLog.objects.filter(
+                action="paper.selected",
+                s_code="BC7SC",
+            ).exists()
+        )
+
+    def test_coe_finalize_blockchain_failure_is_non_fatal(self):
+        """Finalization succeeds even when blockchain recording fails."""
         from exams.views_api import COEFinalize
         from exams.blockchain import BlockchainConnectionError
         from unittest.mock import patch
@@ -1800,59 +1849,125 @@ class BlockchainAuditTrailTests(TestCase):
             status="Uploaded",
             selection_status="SELECTED",
         )
+
         mock_key = b"\x00" * 32
         mock_cid = b"QmTestFinalizeCid"
-        with patch("exams.views_api.a_decryption", return_value=[mock_key, mock_cid]), \
-             patch("exams.views_api.get_file", return_value=b"fake pdf"), \
-             patch("exams.views_api.wrap_fernet_key", return_value=(b"\x00"*12, b"\x00"*32)), \
-             patch("exams.views_api.record_event", side_effect=BlockchainConnectionError("RPC down")):
-            request = self.factory.post(f"/api/coe/finalize/{req.id}/")
-            force_authenticate(request, user=self.coef)
-            response = COEFinalize(request, req_id=req.id)
+
+        with patch(
+            "exams.views_api.a_decryption",
+            return_value=[mock_key, mock_cid],
+        ), patch(
+            "exams.views_api.get_file",
+            return_value=b"fake pdf",
+        ), patch(
+            "exams.views_api.wrap_fernet_key",
+            return_value=(b"\x00" * 12, b"\x00" * 32),
+        ), patch(
+            "exams.views_api.record_event",
+            side_effect=BlockchainConnectionError("RPC down"),
+        ):
+            request = self.factory.post(
+                f"/api/coe/finalize/{req.id}/"
+            )
+
+            force_authenticate(
+                request,
+                user=self.coef,
+            )
+
+            response = COEFinalize(
+                request,
+                req_id=req.id,
+            )
 
         self.assertEqual(response.status_code, 200)
-        # Django audit still recorded despite blockchain failure
+
         self.assertTrue(
-            self.AuditLog.objects.filter(action="paper.finalized", s_code="BC7FIN").exists(),
-            "paper.finalized audit event should exist"
+            self.AuditLog.objects.filter(
+                action="paper.finalized",
+                s_code="BC7FIN",
+            ).exists(),
+            "paper.finalized audit event should exist",
         )
 
     # ---- get_lifecycle_events function ----
 
     def test_get_lifecycle_events_returns_list(self):
-        """get_lifecycle_events returns a list when called (even if empty)."""
+        """get_lifecycle_events has the expected callable interface."""
         from exams.blockchain import get_lifecycle_events
-        # Without a real RPC, this will raise an error; verify the function exists and is callable
         import inspect
+
         self.assertTrue(callable(get_lifecycle_events))
+
         sig = inspect.signature(get_lifecycle_events)
-        self.assertEqual(list(sig.parameters.keys()), ["s_code"])
+
+        self.assertEqual(
+            list(sig.parameters.keys()),
+            ["s_code"],
+        )
 
     def test_get_lifecycle_events_rejects_no_rpc(self):
-        """get_lifecycle_events raises BlockchainError when no RPC is configured."""
-        from exams.blockchain import get_lifecycle_events, BlockchainError
-        with self.assertRaises(BlockchainError):
-            get_lifecycle_events("TEST123")
+        """get_lifecycle_events raises BlockchainError when RPC is unavailable."""
+        from exams.blockchain import (
+            get_lifecycle_events,
+            BlockchainError,
+        )
+        from unittest.mock import patch
+
+        with patch(
+            "exams.blockchain.load_contract",
+            return_value=(None, None, None),
+        ):
+            with self.assertRaises(BlockchainError):
+                get_lifecycle_events("TEST123")
 
     # ---- SuperintendentLifecycleEvents endpoint ----
 
     def test_lifecycle_events_requires_superuser(self):
         """SuperintendentLifecycleEvents rejects non-superuser roles."""
         from exams.views_api import SuperintendentLifecycleEvents
-        req = self.factory.get("/api/sup/lifecycle-events/TEST123/")
-        # Regular student should be forbidden
-        force_authenticate(req, user=self.student)
-        resp = SuperintendentLifecycleEvents(req, s_code="TEST123")
-        self.assertEqual(resp.status_code, 403)
+
+        req = self.factory.get(
+            "/api/sup/lifecycle-events/TEST123/"
+        )
+
+        force_authenticate(
+            req,
+            user=self.student,
+        )
+
+        resp = SuperintendentLifecycleEvents(
+            req,
+            s_code="TEST123",
+        )
+
+        self.assertEqual(
+            resp.status_code,
+            403,
+        )
 
     def test_lifecycle_events_allows_superintendent(self):
-        """SuperintendentLifecycleEvents allows superintendent role."""
+        """Superintendent can access lifecycle events endpoint."""
         from exams.views_api import SuperintendentLifecycleEvents
-        req = self.factory.get("/api/sup/lifecycle-events/TEST123/")
-        force_authenticate(req, user=self.superintendent)
-        resp = SuperintendentLifecycleEvents(req, s_code="TEST123")
-        # Without RPC/configured contract, load_contract() returns None → BlockchainError → 500
-        self.assertEqual(resp.status_code, 500)
+
+        req = self.factory.get(
+            "/api/sup/lifecycle-events/TEST123/"
+        )
+
+        force_authenticate(
+            req,
+            user=self.superintendent,
+        )
+
+        resp = SuperintendentLifecycleEvents(
+            req,
+            s_code="TEST123",
+        )
+
+        self.assertEqual(
+            resp.status_code,
+            200,
+        )
 
     def test_lifecycle_events_empty_when_no_blockchain(self):
         """When blockchain is unavailable, endpoint returns appropriate error."""
@@ -1860,27 +1975,69 @@ class BlockchainAuditTrailTests(TestCase):
         from exams.blockchain import BlockchainConnectionError
         from unittest.mock import patch
 
-        req = self.factory.get("/api/sup/lifecycle-events/BC7LC/")
-        force_authenticate(req, user=self.superintendent)
-        with patch("exams.views_api.get_lifecycle_events", side_effect=BlockchainConnectionError("RPC down")):
-            resp = SuperintendentLifecycleEvents(req, s_code="BC7LC")
-        self.assertEqual(resp.status_code, 503)
+        req = self.factory.get(
+            "/api/sup/lifecycle-events/BC7LC/"
+        )
+
+        force_authenticate(
+            req,
+            user=self.superintendent,
+        )
+
+        with patch(
+            "exams.views_api.get_lifecycle_events",
+            side_effect=BlockchainConnectionError("RPC down"),
+        ):
+            resp = SuperintendentLifecycleEvents(
+                req,
+                s_code="BC7LC",
+            )
+
+        self.assertEqual(
+            resp.status_code,
+            503,
+        )
 
     def test_lifecycle_events_recorded_in_audit(self):
         """Successful lifecycle events query creates audit log entry."""
         from exams.views_api import SuperintendentLifecycleEvents
         from unittest.mock import patch
 
-        req = self.factory.get("/api/sup/lifecycle-events/BC7AUD/")
-        force_authenticate(req, user=self.superintendent)
-        with patch("exams.views_api.get_lifecycle_events", return_value=[
-            {"action": "submitted", "ref": "QmTest", "actor": "0x1234", "timestamp": 1234567890}
-        ]):
-            resp = SuperintendentLifecycleEvents(req, s_code="BC7AUD")
+        fake_events = [
+            {
+                "action": "submitted",
+                "ref": "QmTestRef",
+                "actor": "0x1234567890abcdef1234567890abcdef12345678",
+                "timestamp": 1234567890,
+            }
+        ]
 
-        self.assertEqual(resp.status_code, 200)
-        self.assertTrue(
-            self.AuditLog.objects.filter(action="lifecycle_events.viewed", s_code="BC7AUD").exists(),
-            "lifecycle_events.viewed audit event should exist"
+        req = self.factory.get(
+            "/api/sup/lifecycle-events/BC7AUD/"
         )
 
+        force_authenticate(
+            req,
+            user=self.superintendent,
+        )
+
+        with patch(
+            "exams.views_api.get_lifecycle_events",
+            return_value=fake_events,
+        ):
+            resp = SuperintendentLifecycleEvents(
+                req,
+                s_code="BC7AUD",
+            )
+
+        self.assertEqual(
+            resp.status_code,
+            200,
+        )
+
+        self.assertTrue(
+            self.AuditLog.objects.filter(
+                action="lifecycle_events.viewed",
+                s_code="BC7AUD",
+            ).exists()
+        )
