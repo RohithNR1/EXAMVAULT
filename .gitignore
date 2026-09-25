@@ -47,3 +47,4 @@ backend/logs/
 # Generated Solidity build artifacts
 backend/exams/contracts/out/
 backend_exams_contracts_ExamPapers_sol_ExamPapers.abi
+EXAMVAULT_TEST_CREDENTIALS.txt

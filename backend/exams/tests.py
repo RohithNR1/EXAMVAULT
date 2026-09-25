@@ -1,3 +1,4 @@
+import ast
 import inspect
 import time
 import uuid
@@ -11,7 +12,10 @@ from django.db import connection
 
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from exams.models import CustomUser, FinalPapers, Request
+from exams.models import (
+    CustomUser, FinalPapers, Request, Department, Semester, Subject,
+    TeacherSubjectAssignment, TeacherRequestParticipation,
+)
 from exams.views_api import StudentFinalPapers, StudentMe
 
 
@@ -35,6 +39,79 @@ class AnonymousIdModelTests(TestCase):
                 s_code="ANON02",
                 anonymous_id=request.anonymous_id,
             )
+
+
+class MultiTeacherRequestTests(TestCase):
+    def setUp(self):
+        self.coe = CustomUser.objects.create_user(
+            username="multi_coe", password="password123", role="coe"
+        )
+        self.teachers = [
+            CustomUser.objects.create_user(
+                username=f"multi_teacher_{i}", password="password123",
+                role="teacher", course="B.E.", semester="V",
+                branch="CSE", subject="MACHINE LEARNING",
+            )
+            for i in (1, 2)
+        ]
+        self.factory = APIRequestFactory()
+
+    def test_assignment_is_unique(self):
+        department = Department.objects.create(name="CSE")
+        semester = Semester.objects.create(name="V")
+        subject = Subject.objects.create(
+            code="ML-V", name="Machine Learning",
+            department=department, semester=semester,
+        )
+        TeacherSubjectAssignment.objects.create(teacher=self.teachers[0], subject=subject)
+        with self.assertRaises(IntegrityError):
+            TeacherSubjectAssignment.objects.create(teacher=self.teachers[0], subject=subject)
+
+    def test_coe_can_create_one_request_for_multiple_teachers(self):
+        from exams.models import SubjectCode
+        from exams.views_api import COEAddTeacher
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        SubjectCode.objects.create(s_code="ML001", subject="Machine Learning")
+        request = self.factory.post(
+            "/api/coe/requests/add/",
+            {
+                "s_code": "ML001",
+                "teacher_ids": [str(t.id) for t in self.teachers],
+                "deadline": (timezone.now() + timedelta(days=1)).date(),
+                "syllabus": SimpleUploadedFile("syllabus.pdf", b"pdf", content_type="application/pdf"),
+                "q_pattern": SimpleUploadedFile("pattern.pdf", b"pdf", content_type="application/pdf"),
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.coe)
+        response = COEAddTeacher(request)
+        self.assertEqual(response.status_code, 201)
+        created = Request.objects.get(s_code="ML001")
+        self.assertEqual(
+            set(created.participations.values_list("teacher_id", flat=True)),
+            {teacher.id for teacher in self.teachers},
+        )
+
+    def test_participant_rejection_does_not_reject_shared_request(self):
+        from exams.views_api import TeacherRejectRequest
+
+        shared = Request.objects.create(
+            tusername=self.teachers[0].username, s_code="ML002",
+            deadline=timezone.now().date() + timedelta(days=1),
+        )
+        TeacherRequestParticipation.objects.create(
+            request=shared, teacher=self.teachers[1],
+        )
+        request = self.factory.post(f"/api/teacher/requests/{shared.id}/reject/")
+        force_authenticate(request, user=self.teachers[1])
+        response = TeacherRejectRequest(request, req_id=shared.id)
+        shared.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(shared.status, "Pending")
+        self.assertEqual(
+            shared.participations.get(teacher=self.teachers[1]).status, "Rejected"
+        )
 
 
 class StudentAccessWindowTests(TestCase):
@@ -221,7 +298,7 @@ class SecurityHardeningTests(TestCase):
             self.assertFalse(ser.is_valid(), f"Expected {bad_role} to be rejected, got: {ser.errors}")
 
     def test_teacher_registration_with_empty_academic_fields(self):
-        """Teacher registration with empty-string academic fields (frontend bug fix)."""
+        """Teacher registration requires a controlled department."""
         from exams.serializers import RegisterSerializer
         payload = {
             "username": "teacher_empty",
@@ -235,17 +312,11 @@ class SecurityHardeningTests(TestCase):
             "subject": "",
         }
         ser = RegisterSerializer(data=payload)
-        self.assertTrue(ser.is_valid(), str(ser.errors))
-        user = ser.save()
-        self.assertEqual(user.role, "teacher")
-        self.assertEqual(user.course, "None")
-        self.assertEqual(user.semester, "None")
-        self.assertEqual(user.branch, "None")
-        self.assertEqual(user.subject, "None")
-        user.delete()
+        self.assertFalse(ser.is_valid())
+        self.assertIn("branch", ser.errors)
 
     def test_teacher_registration_with_omitted_academic_fields(self):
-        """Teacher registration without academic fields uses model defaults."""
+        """Teacher registration without a department is rejected."""
         from exams.serializers import RegisterSerializer
         payload = {
             "username": "teacher_missing",
@@ -255,14 +326,8 @@ class SecurityHardeningTests(TestCase):
             "last_name": "Fields",
         }
         ser = RegisterSerializer(data=payload)
-        self.assertTrue(ser.is_valid())
-        user = ser.save()
-        self.assertEqual(user.role, "teacher")
-        self.assertEqual(user.course, "None")
-        self.assertEqual(user.semester, "None")
-        self.assertEqual(user.branch, "None")
-        self.assertEqual(user.subject, "None")
-        user.delete()
+        self.assertFalse(ser.is_valid())
+        self.assertIn("branch", ser.errors)
 
     def test_student_registration_with_valid_academic_fields(self):
         """Student registration preserves submitted academic values and role."""
@@ -998,6 +1063,7 @@ class AuditLoggingTests(TestCase):
             "email": "new@example.com",
             "first_name": "New",
             "last_name": "Teacher",
+            "branch": "ISE",
         }
         request = self.factory.post("/api/auth/register/", payload, format="json")
         response = register_user(request)
@@ -1914,16 +1980,23 @@ class BlockchainAuditTrailTests(TestCase):
         import inspect
         import exams.views_api as _va
 
-        # Read raw source from the module file directly since @api_view
-        # decorators do not preserve __wrapped__
-        source_file = inspect.getfile(_va)
-        with open(source_file) as f:
-            all_lines = f.readlines()
-        # COESelectCandidate starts at line 806, next def starts at 873
-        src = "".join(all_lines[805:872])
+        module_source = inspect.getsource(_va)
+        module_tree = ast.parse(module_source)
+        function_node = next(
+            node
+            for node in module_tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "COESelectCandidate"
+        )
+        src = ast.get_source_segment(module_source, function_node)
 
+        self.assertIsNotNone(src)
         self.assertIn(
-            'record_event(req.s_code, "selected"',
+            "candidate_ref = str(req.anonymous_id)",
+            src,
+        )
+        self.assertIn(
+            'record_event(req.s_code, "selected", candidate_ref)',
             src,
             "record_event with 'selected' not found in COESelectCandidate",
         )
@@ -1933,16 +2006,19 @@ class BlockchainAuditTrailTests(TestCase):
         import inspect
         import exams.views_api as _va
 
-        # Read raw source from the module file directly since @api_view
-        # decorators do not preserve __wrapped__
-        source_file = inspect.getfile(_va)
-        with open(source_file) as f:
-            all_lines = f.readlines()
-        # COEFinalize starts at line 875, next def starts at 967
-        src = "".join(all_lines[874:966])
+        module_source = inspect.getsource(_va)
+        module_tree = ast.parse(module_source)
+        function_node = next(
+            node
+            for node in module_tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "COEFinalize"
+        )
+        src = ast.get_source_segment(module_source, function_node)
 
+        self.assertIsNotNone(src)
         self.assertIn(
-            'record_event(req.s_code, "finalized"',
+            'record_event(req.s_code, "finalized", final.encrypted_cid)',
             src,
             "record_event with 'finalized' not found in COEFinalize",
         )

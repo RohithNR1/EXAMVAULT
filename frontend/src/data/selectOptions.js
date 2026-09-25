@@ -13,41 +13,40 @@ export const COURSES = [
 
 export const SEMESTERS = [
   { value: "", label: "Select Semester" },
-  "I",
-  "II",
-  "III",
-  "IV",
-  "V",
-  "VI",
-  "VII",
-  "VIII",
-].map((s) => ({ value: s, label: String(s) }));
+  { value: "I", label: "I" },
+  { value: "II", label: "II" },
+  { value: "III", label: "III" },
+  { value: "IV", label: "IV" },
+  { value: "V", label: "V" },
+  { value: "VI", label: "VI" },
+  { value: "VII", label: "VII" },
+  { value: "VIII", label: "VIII" },
+];
 
 export const BRANCHES = [
   { value: "", label: "Select Branch" },
-  "CSE",
-  "IT",
-  "ECE",
-  "EEE",
-  "MECH",
-  "BioTech",
-].map((b) => ({ value: b, label: b }));
+  { value: "ISE", label: "ISE" },
+  { value: "CSE", label: "CSE" },
+  { value: "IT", label: "IT" },
+  { value: "ECE", label: "ECE" },
+  { value: "EEE", label: "EEE" },
+  { value: "MECH", label: "MECH" },
+  { value: "BioTech", label: "BioTech" },
+];
 
 export const SUBJECTS = [
   { value: "", label: "Select Subject" },
-  "Internet of Things",
-  "Parallel Computing",
-  "Cryptography",
-  "Big Data Analytics",
-  "MACHINE LEARNING",
-  "CLOUD COMPUTING",
+  { value: "Internet of Things", label: "Internet of Things" },
+  { value: "Parallel Computing", label: "Parallel Computing" },
+  { value: "Cryptography", label: "Cryptography" },
+  { value: "Big Data Analytics", label: "Big Data Analytics" },
+  { value: "MACHINE LEARNING", label: "MACHINE LEARNING" },
+  { value: "CLOUD COMPUTING", label: "CLOUD COMPUTING" },
 ];
 
 export const ROLES = [
   { value: "teacher", label: "Teacher" },
-  { value: "coe", label: "COE" },
   { value: "student", label: "Student" },
-  { value: "superintendent", label: "Superintendent" },
 ];
 
 // COE filter panel uses a loose variant (placeholder "None", no "Select ..." prefix).

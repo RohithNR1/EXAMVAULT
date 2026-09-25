@@ -35,7 +35,6 @@ export default function COE() {
   const [defaultQPatternUrl, setDefaultQPatternUrl] = useState(null);
 
   const [isSendModalOpen, setSendModalOpen] = useState(false);
-  const [targetTeacher, setTargetTeacher] = useState(null);
   const [reqDeadline, setReqDeadline] = useState("");
   const [reqTotalMarks, setReqTotalMarks] = useState(100);
 
@@ -89,21 +88,14 @@ export default function COE() {
     }
   };
 
-  const openSendRequestModal = (teacher) => {
-    setTargetTeacher(teacher);
-    setReqDeadline("");
-    setReqTotalMarks(100);
-    setSendModalOpen(true);
-  };
-
   const handleConfirmRequest = async () => {
-    if (!targetTeacher) return toast("warning", null, "No teacher selected");
+    if (teachers.length === 0) return toast("warning", null, "No eligible teachers found");
     if (!scode || !reqDeadline) return toast("warning", null, "Set deadline");
 
     try {
       const form = new FormData();
       form.append("s_code", scode);
-      form.append("g_id", targetTeacher.id);
+      form.append("teacher_ids", JSON.stringify(teachers.map((teacher) => teacher.id)));
       form.append("deadline", reqDeadline);
       form.append("total_marks", reqTotalMarks);
 
@@ -114,7 +106,6 @@ export default function COE() {
       await coeCreateRequest(form);
       toast("success", null, "Request created successfully");
       setSendModalOpen(false);
-      setTargetTeacher(null);
       await loadRequests();
       await handleSubmitSearch();
     } catch (err) {
@@ -287,7 +278,7 @@ export default function COE() {
                 )}
 
                 <div className="pt-2">
-                  <span className="text-sm font-medium text-neutral-700">Available Teachers</span>
+                  <span className="text-sm font-medium text-neutral-700">Eligible Teachers</span>
                   {teachersLoading ? (
                     <CardSkeleton lines={3} />
                   ) : (
@@ -305,16 +296,23 @@ export default function COE() {
                               {t.first_name} {t.last_name}{" "}
                               <span className="text-neutral-500">({t.username})</span>
                             </div>
-                            <Button
-                              variant="success"
-                              size="sm"
-                              onClick={() => openSendRequestModal(t)}
-                            >
-                              Send Request
-                            </Button>
                           </div>
                         ))}
                       </div>
+                      {teachers.length > 0 && (
+                        <Button
+                          className="mt-3"
+                          variant="success"
+                          size="sm"
+                          onClick={() => {
+                            setReqDeadline("");
+                            setReqTotalMarks(100);
+                            setSendModalOpen(true);
+                          }}
+                        >
+                          Send Request to All Eligible Teachers
+                        </Button>
+                      )}
                     </>
                   )}
                 </div>
@@ -380,7 +378,7 @@ export default function COE() {
       <Modal
         open={isSendModalOpen}
         onClose={() => setSendModalOpen(false)}
-        title={`Send Request to ${targetTeacher?.first_name ?? ""} ${targetTeacher?.last_name ?? ""}`}
+        title="Send Request to All Eligible Teachers"
         footer={
           <>
             <Button variant="ghost" onClick={() => setSendModalOpen(false)}>Cancel</Button>

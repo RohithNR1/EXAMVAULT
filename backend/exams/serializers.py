@@ -55,7 +55,9 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def validate_username(self, value):
         if not value.replace("-", "").replace("_", "").isalnum():
-            raise serializers.ValidationError("O nome de usuário deve conter apenas letras, números, hífens e underscores.")
+            raise serializers.ValidationError(
+                "Username may contain only letters, numbers, hyphens and underscores."
+            )
         return value.lower()
 
     def validate_role(self, value):
@@ -64,7 +66,13 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        # Normalize blank academic fields to the model's sentinel default.
+        role = data.get("role")
+        required_fields = ("semester", "branch") if role == "student" else ("branch",)
+        for field in required_fields:
+            if not data.get(field) or data[field] == "None":
+                raise serializers.ValidationError(
+                    {field: "This field is required for registration."}
+                )
         for field in ("course", "semester", "branch", "subject"):
             if not data.get(field):
                 data[field] = "None"

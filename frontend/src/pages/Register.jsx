@@ -16,7 +16,7 @@ export default function Register() {
     semester: "",
     branch: "",
     subject: "",
-    role: "teacher",
+    role: "student",
   });
 
   const [errors, setErrors] = useState({});
@@ -38,12 +38,17 @@ export default function Register() {
   const validate = () => {
     const err = {};
     if (!form.username) err.username = "Username is required";
+    else if (!/^[A-Za-z0-9_-]+$/.test(form.username))
+      err.username = "Username may contain only letters, numbers, hyphens and underscores.";
     if (!form.email) err.email = "Email is required";
     if (!form.password) err.password = "Password is required";
     if (form.password && form.password.length < 6)
       err.password = "Password must be at least 6 characters";
     if (!form.first_name) err.first_name = "First name is required";
     if (!form.last_name) err.last_name = "Last name is required";
+    if (!form.branch) err.branch = "Department is required";
+    if (form.role === "student" && !form.semester)
+      err.semester = "Semester is required";
     return err;
   };
 
@@ -58,16 +63,7 @@ export default function Register() {
     setErrors({});
     setSubmitting(true);
     try {
-      // Only include academic fields for student registrations; teachers do not
-      // need them and the backend expects either omitted values or valid choices.
-      const payload =
-        form.role === "student" ? form : {
-          username: form.username,
-          password: form.password,
-          email: form.email,
-          first_name: form.first_name,
-          last_name: form.last_name,
-        };
+      const payload = form;
       await register(payload);
       nav("/login");
     } catch (error) {
@@ -229,6 +225,21 @@ export default function Register() {
                       </select>
                     </label>
                   </>
+                )}
+                {form.role === "teacher" && (
+                  <label className="block">
+                    <span className="text-sm font-medium text-neutral-700">Department *</span>
+                    <select
+                      className="mt-1 block w-full rounded-lg border-neutral-300 shadow-soft text-sm focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-opacity-50 py-2 px-3"
+                      value={form.branch}
+                      onChange={(e) => { set("branch", e.target.value); clearFieldError("branch"); }}
+                    >
+                      {BRANCHES.map((b) => (
+                        <option key={b.value} value={b.value}>{b.label}</option>
+                      ))}
+                    </select>
+                    {errors.branch && <p className="mt-1 text-xs text-danger-600">{errors.branch}</p>}
+                  </label>
                 )}
               </div>
 

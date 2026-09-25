@@ -5,6 +5,7 @@ import os
 import tempfile
 import logging
 import uuid
+import json
 
 from django.core.files import File
 from django.conf import settings
@@ -172,7 +173,10 @@ class TeacherPendingRequests(generics.ListAPIView):
     serializer_class = RequestSerializer
 
     def get_queryset(self):
-        return Request.objects.filter(tusername=self.request.user.username, status="Pending").order_by("-id")
+        return Request.objects.filter(
+            Q(tusername=self.request.user.username, status="Pending") |
+            Q(participations__teacher=self.request.user, participations__status="Pending")
+        ).distinct().order_by("-id")
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -184,7 +188,14 @@ class TeacherAcceptedRequests(generics.ListAPIView):
     serializer_class = RequestSerializer
 
     def get_queryset(self):
-        return Request.objects.filter(tusername=self.request.user.username).exclude(status="Pending").order_by("-id")
+        return Request.objects.filter(
+            Q(tusername=self.request.user.username) |
+            Q(participations__teacher=self.request.user,
+              participations__status__in=("Accepted", "Rejected", "Uploaded"))
+        ).exclude(
+            Q(tusername=self.request.user.username, status="Pending") |
+            Q(participations__teacher=self.request.user, participations__status="Pending")
+        ).distinct().order_by("-id")
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -205,11 +216,17 @@ def TeacherAcceptRequest(request, req_id):
             severity="warn",
         )
         return Response({"detail": "Forbidden"}, status=403)
-    r = Request.objects.filter(id=req_id, tusername=request.user.username).first()
+    r = Request.objects.filter(
+        Q(id=req_id, tusername=request.user.username) |
+        Q(id=req_id, participations__teacher=request.user, participations__status="Pending")
+    ).distinct().first()
     if not r:
         return Response({"detail": "Not found"}, status=404)
     r.status = "Accepted"
     r.save()
+    TeacherRequestParticipation.objects.filter(
+        request=r, teacher=request.user, status="Pending"
+    ).update(status="Accepted", responded_at=timezone.now())
     log_event(
         action="request.accepted",
         actor=request.user.username,
@@ -233,11 +250,22 @@ def TeacherRejectRequest(request, req_id):
             severity="warn",
         )
         return Response({"detail": "Forbidden"}, status=403)
-    r = Request.objects.filter(id=req_id, tusername=request.user.username).first()
+    r = Request.objects.filter(
+        Q(id=req_id, tusername=request.user.username) |
+        Q(id=req_id, participations__teacher=request.user, participations__status="Pending")
+    ).distinct().first()
     if not r:
         return Response({"detail": "Not found"}, status=404)
-    r.status = "Rejected"
-    r.save()
+    participation = TeacherRequestParticipation.objects.filter(
+        request=r, teacher=request.user, status="Pending"
+    ).first()
+    if participation:
+        participation.status = "Rejected"
+        participation.responded_at = timezone.now()
+        participation.save(update_fields=("status", "responded_at"))
+    else:
+        r.status = "Rejected"
+        r.save(update_fields=("status",))
     log_event(
         action="request.rejected",
         actor=request.user.username,
@@ -268,7 +296,10 @@ class TeacherUploadPaper(generics.GenericAPIView):
             return Response({"detail": "Forbidden"}, status=403)
 
         logger.debug("TeacherUploadPaper called by user=%s req_id=%s", request.user.username, req_id)
-        r = Request.objects.filter(id=req_id, tusername=request.user.username).first()
+        r = Request.objects.filter(
+            Q(id=req_id, tusername=request.user.username, status="Accepted") |
+            Q(id=req_id, participations__teacher=request.user, participations__status="Accepted")
+        ).distinct().first()
         if not r:
             logger.warning("TeacherUploadPaper: request not found: %s", req_id)
             return Response({"detail": "Request not found"}, status=404)
@@ -359,20 +390,15 @@ class TeacherUploadPaper(generics.GenericAPIView):
                 logger.exception("TeacherUploadPaper: encryption failed: %s", str(e))
                 return Response({"detail":"encryption failed","error":str(e)}, status=500)
 
-            # NOTE: if your encrypt_file writes an encrypted file to ENCRYPTION_ROOT with the expected name,
-            # enc_path will already exist. If your encrypt_file returns the encrypted bytes instead, adapt below to write them.
-            # For safety: if enc_path not present, attempt to create it by re-running a best-effort write (if encrypt_file returned bytes)
             if not os.path.exists(enc_path):
-                logger.debug("TeacherUploadPaper: encrypted file not found at expected path %s - attempting to create a placeholder encrypted file", enc_path)
-                try:
-                    # best-effort: if encrypt_file returned bytes (key is tuple or dict), handle here
-                    # But if nothing to write, continue — add_file may fail which we catch below.
-                    # We write a small placeholder to avoid crash (not ideal). Log a warning.
-                    with open(enc_path, "wb") as ef:
-                        ef.write(b"")  # placeholder; ideally your encrypt_file should write the real encrypted data
-                    logger.warning("TeacherUploadPaper: placeholder encrypted file created at %s (please ensure encrypt_file writes encrypted file to ENCRYPTION_ROOT)", enc_path)
-                except Exception as e:
-                    logger.exception("TeacherUploadPaper: failed to create placeholder encrypted file: %s", str(e))
+                logger.error(
+                    "TeacherUploadPaper: encrypted file missing at expected path %s",
+                    enc_path,
+                )
+                return Response(
+                    {"detail": "Encrypted paper was not created; upload aborted."},
+                    status=500,
+                )
 
             # --- Upload encrypted file to IPFS/MFS ---
             mfs_file_path = f"/uploads/{enc_name}"
@@ -430,6 +456,9 @@ class TeacherUploadPaper(generics.GenericAPIView):
                 r.selection_status = "PENDING"
                 r.uploaded_at = timezone.now()
                 r.save()
+                TeacherRequestParticipation.objects.filter(
+                    request=r, teacher=request.user, status="Accepted"
+                ).update(status="Uploaded", responded_at=r.uploaded_at)
                 logger.info("TeacherUploadPaper: Request %s marked Uploaded; saved private_key and enc_field", r.id)
             except Exception as e:
                 logger.exception("TeacherUploadPaper: a_encryption or saving private key failed: %s", str(e))
@@ -641,8 +670,13 @@ def COEGetTeachers(request):
 
     active_tusernames = list(
         Request.objects.filter(s_code=s_code, status__in=["Pending", "Accepted", "Uploaded"])
-        .values_list('tusername', flat=True)
-        .distinct()
+        .values_list('tusername', flat=True).distinct()
+    ) + list(
+        TeacherRequestParticipation.objects.filter(
+            request__s_code=s_code,
+            request__status__in=["Pending", "Accepted", "Uploaded"],
+            status__in=["Pending", "Accepted"],
+        ).values_list("teacher__username", flat=True).distinct()
     )
 
     queryset = User.objects.filter(
@@ -695,17 +729,34 @@ def COEAddTeacher(request):
     s_code = request.data.get('s_code')
     syllabus_file = request.FILES.get('syllabus')  # optional
     q_pattern_file = request.FILES.get('q_pattern')  # optional
-    t_id = request.data.get('g_id')
+    teacher_ids = request.data.get("teacher_ids", request.data.get("g_ids"))
+    if hasattr(request.data, "getlist"):
+        submitted_ids = request.data.getlist("teacher_ids") or request.data.getlist("g_ids")
+        if len(submitted_ids) > 1:
+            teacher_ids = submitted_ids
+    if teacher_ids is None:
+        teacher_ids = [request.data.get("g_id")]
+    elif isinstance(teacher_ids, str):
+        try:
+            parsed = json.loads(teacher_ids)
+            teacher_ids = parsed if isinstance(parsed, list) else [parsed]
+        except (TypeError, ValueError):
+            teacher_ids = [value.strip() for value in teacher_ids.split(",") if value.strip()]
+    teacher_ids = [value for value in teacher_ids if value not in (None, "")]
     deadline = request.data.get('deadline')
     total_marks = request.data.get('total_marks')
 
-    if not (s_code and t_id and deadline):
+    if not (s_code and teacher_ids and deadline):
         return Response({"detail":"missing fields"}, status=400)
 
-    u = User.objects.filter(id=t_id).values('username')
-    if not u:
+    teacher_filter = {"id__in": teacher_ids, "role": "teacher"}
+    for field in ("course", "semester", "branch", "subject"):
+        if request.data.get(field):
+            teacher_filter[field] = request.data[field]
+    teachers = list(User.objects.filter(**teacher_filter).order_by("id"))
+    if len(teachers) != len(set(str(value) for value in teacher_ids)):
         return Response({"detail":"teacher not found"}, status=404)
-    username = u[0]['username']
+    username = teachers[0].username
 
     subj_obj = SubjectCode.objects.filter(s_code=s_code).first()
     if (not syllabus_file or not q_pattern_file):
@@ -728,6 +779,9 @@ def COEAddTeacher(request):
         status="Pending",
         total_marks=int(total_marks) if total_marks is not None else 100
     )
+    TeacherRequestParticipation.objects.bulk_create([
+        TeacherRequestParticipation(request=obj, teacher=teacher) for teacher in teachers
+    ])
     log_event(
         action="request.created",
         actor=request.user.username,

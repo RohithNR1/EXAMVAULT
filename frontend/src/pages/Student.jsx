@@ -83,7 +83,7 @@ export default function Student() {
   return (
     <Layout>
       <div className="max-w-5xl mx-auto">
-        <h2 className="text-2xl font-bold text-neutral-800 mb-6">My Exam Results</h2>
+        <h2 className="text-2xl font-bold text-neutral-800 mb-6">My Finalized Exams</h2>
 
         {loading ? (
           <div className="space-y-4">
@@ -101,8 +101,8 @@ export default function Student() {
           <Card>
             <Card.Body>
               <EmptyState
-                title="No exam results available yet"
-                description="Results will appear here once your exams are finalized."
+                title="No finalized exams available yet"
+                description="Finalized exams will appear here when they are released to you."
               />
             </Card.Body>
           </Card>

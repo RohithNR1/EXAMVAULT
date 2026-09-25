@@ -36,6 +36,7 @@ SEM = (
 
 BRANCH = (
     ('None', 'None'),
+    ('ISE', 'ISE'),
     ('CSE', 'CSE'),
     ('IT', 'IT'),
     ('ECE', 'ECE'),
@@ -81,6 +82,30 @@ class CustomUser(AbstractUser):
         return self.username
 
 
+class Department(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+
+    def __str__(self):
+        return self.name
+
+
+class Semester(models.Model):
+    name = models.CharField(max_length=20, unique=True)
+
+    def __str__(self):
+        return self.name
+
+
+class Subject(models.Model):
+    code = models.CharField(max_length=20, unique=True)
+    name = models.CharField(max_length=100)
+    department = models.ForeignKey(Department, on_delete=models.PROTECT, related_name="subjects")
+    semester = models.ForeignKey(Semester, on_delete=models.PROTECT, related_name="subjects")
+
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+
 class Request(models.Model):
     tusername = models.CharField(max_length=40, default='None')
     s_code = models.CharField(max_length=7, default="None")
@@ -108,6 +133,35 @@ class Request(models.Model):
 
     def __str__(self):
         return f"{self.tusername} - {self.s_code}"
+
+
+class TeacherSubjectAssignment(models.Model):
+    teacher = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="subject_assignments")
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name="teacher_assignments")
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("teacher", "subject"), name="unique_teacher_subject_assignment")
+        ]
+
+
+class TeacherRequestParticipation(models.Model):
+    STATUS = (
+        ("Pending", "Pending"),
+        ("Accepted", "Accepted"),
+        ("Rejected", "Rejected"),
+        ("Uploaded", "Uploaded"),
+    )
+    request = models.ForeignKey(Request, on_delete=models.CASCADE, related_name="participations")
+    teacher = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="request_participations")
+    status = models.CharField(max_length=10, choices=STATUS, default="Pending")
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("request", "teacher"), name="unique_teacher_request_participation")
+        ]
 
 
 class FinalPapers(models.Model):
